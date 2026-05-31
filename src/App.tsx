@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppState, CashAccount, BankCard, Income, Expense, Debt, Transaction, AppNotification, CategoryIncome, CategoryExpense } from './types';
+import { AppState, CashAccount, BankCard, Income, Expense, Debt, Transaction, AppNotification, CategoryIncome, CategoryExpense, CreditCard as DbCreditCard, CreditCardPurchase } from './types';
 import { DEFAULT_APP_STATE } from './initialData';
 import { exportStateAsJSON } from './utils';
 import { 
@@ -7,7 +7,7 @@ import {
   TrendingUp, User, Lock, Unlock, Settings, HelpCircle, RefreshCw, 
   FileDown, Share2, Landmark, ShieldAlert, ArrowUpRight, ArrowDownLeft,
   DollarSign, CircleDot, Database, CheckSquare, Zap, BadgeCheck, AlertCircle,
-  Cloud, CloudOff
+  Cloud, CloudOff, ArrowRightLeft
 } from 'lucide-react';
 
 import EmailLogin from './components/EmailLogin';
@@ -15,12 +15,16 @@ import NotificationDrawer from './components/NotificationDrawer';
 import CashCardManagement from './components/CashCardManagement';
 import InflowsOutflows from './components/InflowsOutflows';
 import DebtTracker from './components/DebtTracker';
+import TransferFunds from './components/TransferFunds';
+import CreditCardManagement from './components/CreditCardManagement';
 import ReportsCentre from './components/ReportsCentre';
 import SettingsModal from './components/SettingsModal';
 import TransactionEditModal from './components/TransactionEditModal';
 import { getSupabaseConfig, syncStateToSupabase, syncStateFromSupabase, forceCancelCardInSupabase } from './supabase';
+import { useNotifications } from './context/NotificationContext';
 
 export default function App() {
+  const { showConfirm, showToast } = useNotifications();
   // 1. Core State
   const [state, setState] = useState<AppState>(DEFAULT_APP_STATE);
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -322,6 +326,80 @@ export default function App() {
     });
   };
 
+  const handleAddCreditCard = (card: Omit<DbCreditCard, 'id'>) => {
+      updateState(prev => ({
+          ...prev,
+          creditCards: [...prev.creditCards, { ...card, id: `cc-${Date.now()}` } as DbCreditCard]
+      }));
+  };
+
+  const handleUpdateCard = (updatedCard: BankCard) => {
+    updateState(prev => ({
+      ...prev,
+      cards: prev.cards.map(c => c.id === updatedCard.id ? updatedCard : c)
+    }));
+  };
+
+  const handleAddCreditCardPurchase = (purchase: Omit<CreditCardPurchase, 'id'>) => {
+    updateState(prev => {
+        const updatedCards = prev.cards.map(c => c.id === purchase.cardId ? { ...c, currentBalance: c.currentBalance + purchase.amount } : c);
+        
+        const newTransaction: Transaction = {
+          id: `trans-${Date.now()}`,
+          type: 'expense',
+          title: `Credit Card Purchase: ${purchase.description}`,
+          amount: purchase.amount,
+          date: purchase.date,
+          category: 'Shopping', // Default category
+          accountId: purchase.cardId,
+          accountType: 'card',
+        };
+        
+        return {
+            ...prev,
+            cards: updatedCards,
+            creditCardPurchases: [...prev.creditCardPurchases, { ...purchase, id: `ccp-${Date.now()}` } as CreditCardPurchase],
+            transactions: [newTransaction, ...prev.transactions]
+        };
+    });
+    showToast('success', 'Purchase recorded successfully!');
+  };
+
+  const handlePayCreditCard = (cardId: string, amount: number, fromId: string, fromType: 'cash' | 'card') => {
+      updateState(prev => {
+          let updatedCash = [...prev.cashAccounts];
+          let updatedCards = [...prev.cards];
+          
+          if (fromType === 'cash') {
+              updatedCash = updatedCash.map(c => c.id === fromId ? { ...c, balance: c.balance - amount } : c);
+          } else {
+              updatedCards = updatedCards.map(c => c.id === fromId ? { ...c, currentBalance: c.currentBalance - amount } : c);
+          }
+          
+          const updatedCardsFinal = updatedCards.map(c => c.id === cardId ? { ...c, currentBalance: c.currentBalance - amount } : c);
+          
+          const targetCard = prev.cards.find(c => c.id === cardId);
+          const newTransaction: Transaction = {
+            id: `trans-${Date.now()}`,
+            type: 'debt_payment',
+            title: `Credit Card Settlement: ${targetCard?.cardName || 'Card'}`,
+            amount: amount,
+            date: new Date().toISOString().split('T')[0],
+            category: 'Debt Repayment',
+            accountId: fromId,
+            accountType: fromType,
+          };
+          
+          return {
+              ...prev,
+              cashAccounts: updatedCash,
+              cards: updatedCardsFinal,
+              transactions: [newTransaction, ...prev.transactions]
+          };
+      });
+      showToast('success', 'Payment recorded successfully!');
+  };
+
   const handleIncreaseDebt = (debtId: string, amount: number) => {
     updateState(prev => {
       return {
@@ -525,21 +603,31 @@ export default function App() {
         updatedIncomes = updatedIncomes.filter(i => i.id !== tx.referenceId);
         if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, true);
       } else if (tx.type === 'expense') {
-        updatedExpenses = updatedExpenses.filter(e => e.id !== tx.referenceId);
-        if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+        if(tx.title.startsWith('Credit Card Purchase:')) {
+            // Liability purchase: previously added to balance, need to subtract
+            updatedCards = updatedCards.map(c => c.id === tx.accountId ? { ...c, currentBalance: c.currentBalance - tx.amount } : c);
+        } else {
+            updatedExpenses = updatedExpenses.filter(e => e.id !== tx.referenceId);
+            if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+        }
       } else if (tx.type === 'debt_payment') {
-        if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
-        updatedDebts = updatedDebts.map(d => {
-          const removedPayment = d.payments?.find(p => p.id === tx.referenceId);
-          if (removedPayment) {
-            return {
-              ...d,
-              remainingAmount: d.remainingAmount + Math.abs(removedPayment.amount),
-              payments: d.payments.filter(p => p.id !== tx.referenceId)
-            };
-          }
-          return d;
-        });
+        if(tx.title.startsWith('Credit Card Settlement:')) {
+            // Settlement: previously subtracted from balance, need to add
+            updatedCards = updatedCards.map(c => c.id === tx.accountId ? { ...c, currentBalance: c.currentBalance + tx.amount } : c);
+        } else {
+            if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+            updatedDebts = updatedDebts.map(d => {
+              const removedPayment = d.payments?.find(p => p.id === tx.referenceId);
+              if (removedPayment) {
+                return {
+                  ...d,
+                  remainingAmount: d.remainingAmount + Math.abs(removedPayment.amount),
+                  payments: d.payments.filter(p => p.id !== tx.referenceId)
+                };
+              }
+              return d;
+            });
+        }
       } else if (tx.type === 'deposit') {
         if (tx.accountId) reverseAmount(tx.amount, tx.accountId, 'cash', true);
       } else if (tx.type === 'withdrawal') {
@@ -559,6 +647,97 @@ export default function App() {
     setEditingTransactionId(null);
   };
 
+  // Rule: Internal Transfers
+  const handleTransferFunds = (
+    fromId: string,
+    fromType: 'cash' | 'card',
+    toId: string,
+    toType: 'cash' | 'card',
+    amount: number,
+    note: string,
+    date: string
+  ) => {
+    if (fromId === toId && fromType === toType) {
+      showToast('error', "Source and destination accounts cannot be the same.");
+      return;
+    }
+
+    const transferId = `trans-grp-${Date.now()}`;
+    const transOutId = `trans-${Date.now()}-out`;
+    const transInId = `trans-${Date.now()}-in`;
+
+    updateState(prev => {
+      // 1. Validate balance
+      let sourceAccountBalance = 0;
+      if (fromType === 'cash') {
+        sourceAccountBalance = prev.cashAccounts.find(c => c.id === fromId)?.balance || 0;
+      } else {
+        sourceAccountBalance = prev.cards.find(c => c.id === fromId)?.currentBalance || 0;
+      }
+
+      if (sourceAccountBalance < amount) {
+        showToast('error', "Insufficient balance in the source account.");
+        return prev;
+      }
+
+      // 2. Perform transfer
+      let updatedCash = [...prev.cashAccounts];
+      let updatedCards = [...prev.cards];
+
+      // Deduct from source
+      if (fromType === 'cash') {
+        updatedCash = updatedCash.map(c => c.id === fromId ? { ...c, balance: c.balance - amount } : c);
+      } else {
+        updatedCards = updatedCards.map(c => c.id === fromId ? { ...c, currentBalance: c.currentBalance - amount } : c);
+      }
+
+      // Add to destination
+      if (toType === 'cash') {
+        updatedCash = updatedCash.map(c => c.id === toId ? { ...c, balance: c.balance + amount } : c);
+      } else {
+        updatedCards = updatedCards.map(c => c.id === toId ? { ...c, currentBalance: c.currentBalance + amount } : c);
+      }
+
+      // 3. Transactions
+      const fromName = fromType === 'cash' ? prev.cashAccounts.find(x => x.id === fromId)?.name || 'Cash' : prev.cards.find(x => x.id === fromId)?.cardName || 'Bank Card';
+      const toName = toType === 'cash' ? prev.cashAccounts.find(x => x.id === toId)?.name || 'Cash' : prev.cards.find(x => x.id === toId)?.cardName || 'Bank Card';
+
+      const transOut: Transaction = {
+        id: transOutId,
+        type: 'transfer',
+        title: `Transfer to ${toName}: ${note}`,
+        amount: -amount,
+        date,
+        category: 'Transfer Out',
+        accountId: fromId,
+        accountType: fromType,
+        targetAccountId: toId,
+        targetAccountType: toType,
+        referenceId: transferId,
+      };
+
+      const transIn: Transaction = {
+        id: transInId,
+        type: 'transfer',
+        title: `Transfer from ${fromName}: ${note}`,
+        amount: amount,
+        date,
+        category: 'Transfer In',
+        accountId: toId,
+        accountType: toType,
+        targetAccountId: fromId,
+        targetAccountType: fromType,
+        referenceId: transferId,
+      };
+
+      return {
+        ...prev,
+        cashAccounts: updatedCash,
+        cards: updatedCards,
+        transactions: [transOut, transIn, ...prev.transactions],
+      };
+    });
+  };
   const handleEditTransaction = (txId: string, newData: any) => {
     updateState(prev => {
       const tx = prev.transactions.find(t => t.id === txId);
@@ -598,10 +777,6 @@ export default function App() {
       let updatedDebts = [...prev.debts];
 
       if (tx.type === 'income') {
-        updatedIncomes = updatedIncomes.map(i => i.id === tx.referenceId ? {
-          ...i, amount: newData.amount, title: newData.title, date: newData.date, category: newData.category,
-          source: newData.title, targetAccountId: newData.accountId, targetType: newData.accountType
-        } : i);
       } else if (tx.type === 'expense') {
         updatedExpenses = updatedExpenses.map(e => e.id === tx.referenceId ? {
           ...e, amount: newData.amount, title: newData.title, date: newData.date, category: newData.category,
@@ -656,10 +831,13 @@ export default function App() {
 
   // Reset demo setup
   const triggerResetDemo = () => {
-    if (confirm('Are you sure you want to restore all ledger books to initial demo genesis states? This replaces modifications.')) {
-      updateState(() => DEFAULT_APP_STATE);
-      alert('Ledger re-seeded beautifully.');
-    }
+    showConfirm({
+      message: 'Are you sure you want to restore all ledger books to initial demo genesis states? This replaces modifications.',
+      onConfirm: () => {
+        updateState(() => DEFAULT_APP_STATE);
+        showToast('success', 'Ledger re-seeded beautifully.');
+      }
+    });
   };
 
   // JSON state upload restoration
@@ -673,12 +851,12 @@ export default function App() {
         const loadedJson = JSON.parse(event.target?.result as string);
         if (loadedJson.cashAccounts && loadedJson.cards && loadedJson.transactions) {
           updateState(() => loadedJson);
-          alert('Database restored successfully! Ledger tracks have re-balanced.');
+          showToast('success', 'Database restored successfully! Ledger tracks have re-balanced.');
         } else {
-          alert('Invalid backup file. Requisites database elements were missing.');
+          showToast('error', 'Invalid backup file. Requisites database elements were missing.');
         }
       } catch (err) {
-        alert('File decode failure. Try with a valid export JSON backup.');
+        showToast('error', 'File decode failure. Try with a valid export JSON backup.');
       }
     };
     reader.readAsText(file);
@@ -1049,16 +1227,24 @@ export default function App() {
 
               {/* =================== CASE: TAB: ACCOUNTS =================== */}
               {activeTab === 'accounts' && (
-                <CashCardManagement
-                  cashAccounts={state.cashAccounts}
-                  cards={state.cards}
-                  onAddCashAccount={handleAddCashAccount}
-                  onEditCashAccount={handleEditCashAccount}
-                  onAddCard={handleAddCard}
-                  onDeleteCard={handleDeleteCard}
-                  onDeleteCashAccount={handleDeleteCashAccount}
-                  currency={state.currency}
-                />
+                <div className="space-y-6">
+                  <CashCardManagement
+                    cashAccounts={state.cashAccounts}
+                    cards={state.cards}
+                    onAddCashAccount={handleAddCashAccount}
+                    onEditCashAccount={handleEditCashAccount}
+                    onAddCard={handleAddCard}
+                    onDeleteCard={handleDeleteCard}
+                    onDeleteCashAccount={handleDeleteCashAccount}
+                    currency={state.currency}
+                  />
+                  <TransferFunds
+                    cashAccounts={state.cashAccounts}
+                    cards={state.cards}
+                    currency={state.currency}
+                    onTransferFunds={handleTransferFunds}
+                  />
+                </div>
               )}
 
               {/* =================== CASE: TAB: INFLOWS_OUTFLOWS =================== */}
@@ -1074,15 +1260,26 @@ export default function App() {
 
               {/* =================== CASE: TAB: DEBTS =================== */}
               {activeTab === 'debts' && (
-                <DebtTracker
-                  debts={state.debts}
-                  cashAccounts={state.cashAccounts}
-                  cards={state.cards}
-                  onAddDebt={handleAddDebt}
-                  onIncreaseDebt={handleIncreaseDebt}
-                  onMakeDebtPayment={handleMakeDebtPayment}
-                  currency={state.currency}
-                />
+                <div className="space-y-6">
+                  <DebtTracker
+                    debts={state.debts}
+                    cashAccounts={state.cashAccounts}
+                    cards={state.cards}
+                    onAddDebt={handleAddDebt}
+                    onIncreaseDebt={handleIncreaseDebt}
+                    onMakeDebtPayment={handleMakeDebtPayment}
+                    currency={state.currency}
+                  />
+                  <CreditCardManagement
+                    creditCards={state.cards.filter(c => c.cardType === 'Credit')}
+                    cashAccounts={state.cashAccounts}
+                    cards={state.cards}
+                    currency={state.currency}
+                    onPayCard={handlePayCreditCard}
+                    onAddPurchase={handleAddCreditCardPurchase}
+                    onUpdateCard={handleUpdateCard}
+                  />
+                </div>
               )}
 
               {/* =================== CASE: TAB: REPORTS =================== */}

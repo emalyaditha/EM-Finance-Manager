@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CashAccount, BankCard } from '../types';
 import { Plus, Trash2, Wallet, CreditCard, ChevronRight, CornerDownRight, Landmark, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { useNotifications } from '../context/NotificationContext';
 
 interface CashCardManagementProps {
   cashAccounts: CashAccount[];
@@ -23,6 +24,7 @@ export default function CashCardManagement({
   onDeleteCashAccount,
   currency,
 }: CashCardManagementProps) {
+  const { showToast, showConfirm } = useNotifications();
   // Cash form states
   const [cashName, setCashName] = useState('');
   const [cashBalance, setCashBalance] = useState('');
@@ -61,7 +63,7 @@ export default function CashCardManagement({
   const handleCreateCard = (e: React.FormEvent) => {
     e.preventDefault();
     if (!cardName.trim() || !bankName.trim()) {
-      alert('Card name and bank source are required');
+      showToast('error', 'Card name and bank source are required');
       return;
     }
     const balanceNum = parseFloat(cardBalance) || 0;
@@ -102,7 +104,7 @@ export default function CashCardManagement({
 
     const amountNum = parseFloat(qtyAction) || 0;
     if (amountNum <= 0) {
-      alert('Amount must be positive');
+      showToast('error', 'Amount must be positive');
       return;
     }
 
@@ -111,7 +113,7 @@ export default function CashCardManagement({
       nextBalance += amountNum;
     } else if (actionType === 'withdraw') {
       if (account.balance < amountNum) {
-        alert('Insufficient cash in hand to withdraw this amount');
+        showToast('error', 'Insufficient cash in hand to withdraw this amount');
         return;
       }
       nextBalance -= amountNum;
@@ -191,9 +193,10 @@ export default function CashCardManagement({
 
                 <button
                   onClick={() => {
-                    if (confirm(`Delete ${account.name} wallet?`)) {
-                      onDeleteCashAccount(account.id);
-                    }
+                    showConfirm({
+                      message: `Delete ${account.name} wallet?`,
+                      onConfirm: () => onDeleteCashAccount(account.id)
+                    });
                   }}
                   className="p-2 bg-[#050505] border border-zinc-800 text-zinc-500 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
                 >

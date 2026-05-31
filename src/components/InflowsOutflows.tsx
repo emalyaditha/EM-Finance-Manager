@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CashAccount, BankCard, CategoryIncome, CategoryExpense } from '../types';
 import { PlusCircle, MinusCircle, Wallet, CreditCard, Calendar, RefreshCcw, Landmark, ShieldAlert, Tag } from 'lucide-react';
+import { useNotifications } from '../context/NotificationContext';
 
 interface InflowsOutflowsProps {
   cashAccounts: CashAccount[];
@@ -17,6 +18,7 @@ export default function InflowsOutflows({
   onAddExpense,
   currency,
 }: InflowsOutflowsProps) {
+  const { showToast } = useNotifications();
   // Navigation trigger Inside Inflows Tab
   const [toggleForm, setToggleForm] = useState<'income' | 'expense'>('income');
 
@@ -63,12 +65,12 @@ export default function InflowsOutflows({
     e.preventDefault();
     const amountNum = parseFloat(incAmount) || 0;
     if (amountNum <= 0) {
-      alert('Amount must be positive');
+      showToast('error', 'Amount must be positive');
       return;
     }
 
     if (!incTargetId) {
-      alert('Please select a target cash asset or bank card account');
+      showToast('error', 'Please select a target cash asset or bank card account');
       return;
     }
 
@@ -76,7 +78,7 @@ export default function InflowsOutflows({
     setIncAmount('');
     setIncSource('');
     setIncCategory('Salary');
-    alert('Income received and ledger balanced successfully!');
+    showToast('success', 'Income received and ledger balanced successfully!');
   };
 
   const handleExpenseSubmit = (e: React.FormEvent) => {
@@ -84,12 +86,12 @@ export default function InflowsOutflows({
     setInsufficiencyError(null);
     const amountNum = parseFloat(expAmount) || 0;
     if (amountNum <= 0) {
-      alert('Amount must be positive');
+      showToast('error', 'Amount must be positive');
       return;
     }
 
     if (!expMethodId) {
-      alert('Please select a valid payment source account');
+      showToast('error', 'Please select a valid payment source account');
       return;
     }
 
@@ -121,7 +123,7 @@ export default function InflowsOutflows({
     setExpAmount('');
     setExpTitle('');
     setExpDesc('');
-    alert('Invoice payment settled automatically! Account balance reduced.');
+    showToast('success', 'Invoice payment settled automatically! Account balance reduced.');
   };
 
   const handleSelectTargetAccount = (value: string) => {

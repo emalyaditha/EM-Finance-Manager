@@ -14,6 +14,7 @@ import {
   getSupabaseSQLScript,
   truncateAllDataInSupabase
 } from '../supabase';
+import { useNotifications } from '../context/NotificationContext';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ export default function SettingsModal({
   handleJSONRestore,
   onLogout
 }: SettingsModalProps) {
+  const { showConfirm } = useNotifications();
   // Supabase Configuration State
   const [supabaseUrl, setSupabaseUrl] = useState('');
   const [supabaseKey, setSupabaseKey] = useState('');
@@ -124,34 +126,35 @@ export default function SettingsModal({
   };
 
   const handleWipeDatabase = async () => {
-    if (!window.confirm('WARNING: Are you sure you want to completely wipe all your records? This will delete all transactions, ledgers, debts, incomes from both local state and the cloud database completely. This action cannot be undone.')) {
-      return;
-    }
-    
-    // Always reset local state first
-    updateState(prev => ({
-      ...prev,
-      cashAccounts: [],
-      cards: [],
-      transactions: [],
-      debts: [],
-      incomes: [],
-      expenses: [],
-      notifications: []
-    }));
+    showConfirm({
+      message: 'WARNING: Are you sure you want to completely wipe all your records? This will delete all transactions, ledgers, debts, incomes from both local state and the cloud database completely. This action cannot be undone.',
+      onConfirm: async () => {
+        // Always reset local state first
+        updateState(prev => ({
+          ...prev,
+          cashAccounts: [],
+          cards: [],
+          transactions: [],
+          debts: [],
+          incomes: [],
+          expenses: [],
+          notifications: []
+        }));
 
-    setSyncStatus('loading');
-    setSyncMessage('Truncating database...');
-    
-    const result = await truncateAllDataInSupabase(userEmail);
-    if (!result.success) {
-      setSyncStatus('error');
-      setSyncMessage(result.error || 'Wiped local state. Note: Cloud DB was not connected or failed to truncate.');
-      return;
-    }
+        setSyncStatus('loading');
+        setSyncMessage('Truncating database...');
+        
+        const result = await truncateAllDataInSupabase(userEmail);
+        if (!result.success) {
+          setSyncStatus('error');
+          setSyncMessage(result.error || 'Wiped local state. Note: Cloud DB was not connected or failed to truncate.');
+          return;
+        }
 
-    setSyncStatus('success');
-    setSyncMessage('Database explicitly truncated/wiped completely.');
+        setSyncStatus('success');
+        setSyncMessage('Database explicitly truncated/wiped completely.');
+      }
+    });
   };
 
   const copyToClipboard = (text: string, type: 'sql' | 'flutter') => {
@@ -502,6 +505,7 @@ class CloudSyncService {
                       <option value="$">$ (US Dollar)</option>
                       <option value="€">€ (Euro)</option>
                       <option value="£">£ (British Pound)</option>
+                      <option value="¥">¥ (Japanese Yen)</option>
                     </select>
                   </div>
                 </div>

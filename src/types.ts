@@ -13,8 +13,28 @@ export interface BankCard {
   bankName: string;
   cardType: 'Debit' | 'Credit';
   currentBalance: number;
+  limit?: number; // Added limit for credit cards
+  isLimitLocked?: boolean; // True to lock the limit
   cardNumber?: string; // masked card number e.g. **** 4242
   isCanceled?: boolean; // Support soft delete / cancel status
+}
+
+export interface CreditCard {
+  id: string;
+  name: string;
+  balance: number; // The amount owed (liability)
+  limit: number;
+  dueDate: string;
+  minPayment: number;
+}
+
+export interface CreditCardPurchase {
+  id: string;
+  cardId: string;
+  amount: number;
+  description: string;
+  merchant: string;
+  date: string;
 }
 
 export interface Income {
@@ -82,6 +102,8 @@ export interface AppNotification {
 export interface AppState {
   cashAccounts: CashAccount[];
   cards: BankCard[];
+  creditCards: CreditCard[];
+  creditCardPurchases: CreditCardPurchase[];
   incomes: Income[];
   expenses: Expense[];
   debts: Debt[];

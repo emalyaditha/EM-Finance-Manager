@@ -50,7 +50,7 @@ export function getSupabaseClient(): SupabaseClient | null {
 
 // Fallback column list if Supabase REST OpenAPI inspection is unavailable
 const FALLBACK_COLUMNS: { [tableName: string]: string[] } = {
-  bank_cards: ['id', 'user_email', 'card_name', 'bank_name', 'card_type', 'current_balance', 'card_number', 'is_canceled', 'updated_at'],
+  bank_cards: ['id', 'user_email', 'card_name', 'bank_name', 'card_type', 'current_balance', 'card_number', 'is_canceled', 'limit', 'is_limit_locked', 'updated_at'],
   cash_accounts: ['id', 'user_email', 'name', 'balance', 'updated_at'],
   transactions: ['id', 'user_email', 'type', 'title', 'amount', 'date', 'category', 'account_id', 'account_type', 'target_account_id', 'target_account_type', 'reference_id', 'updated_at'],
   debts: ['id', 'user_email', 'debt_source', 'total_amount', 'remaining_amount', 'due_date', 'notes', 'payments', 'updated_at'],
@@ -275,6 +275,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
             // Clean up aliases so we don't send duplicate random columns
             delete mapped.is_cancelled;
             delete mapped.isCanceled;
+
+            if (cardsCols.includes('limit')) {
+              mapped.limit = card.limit !== undefined ? card.limit : null;
+            }
+            if (cardsCols.includes('is_limit_locked') || cardsCols.includes('isLimitLocked')) {
+              const activeLockCol = cardsCols.includes('is_limit_locked') ? 'is_limit_locked' : 'isLimitLocked';
+              mapped[activeLockCol] = card.isLimitLocked !== undefined ? Boolean(card.isLimitLocked) : true;
+            }
             
             return mapped;
           });
@@ -696,7 +704,11 @@ export async function syncStateFromSupabase(email: string): Promise<{ success: b
  * Returns the copyable SQL commands for setting up Supabase
  */
 export function getSupabaseSQLScript(): string {
-  return `-- 1. CREATE CORE STATE MATRIX FOR FLUTTER <-> REACT STATE SYNC (Appends row-by-row history list)
+  return `-- ⚠️ UPGRADE MIGRATION (RUN THIS IF YOU ALREADY CREATED TABLES PREVIOUSLY):
+-- alter table public.bank_cards add column if not exists "limit" numeric;
+-- alter table public.bank_cards add column if not exists is_limit_locked boolean default true;
+
+-- 1. CREATE CORE STATE MATRIX FOR FLUTTER <-> REACT STATE SYNC (Appends row-by-row history list)
 create table if not exists public.ledger_states (
   id uuid default gen_random_uuid() primary key,
   user_email text not null,
@@ -715,6 +727,8 @@ create table if not exists public.bank_cards (
   bank_name text not null,
   card_type text not null, -- 'Debit' | 'Credit'
   current_balance numeric not null default 0,
+  "limit" numeric,
+  is_limit_locked boolean not null default true,
   card_number text,
   is_canceled boolean not null default false,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null

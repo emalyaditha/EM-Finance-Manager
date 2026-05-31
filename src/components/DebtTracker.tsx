@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Debt, CashAccount, BankCard } from '../types';
 import { Plus, CheckCircle2, AlertCircle, Sparkles, Calendar, Receipt, Landmark, ShieldCheck, ArrowRight, CornerDownRight } from 'lucide-react';
+import { useNotifications } from '../context/NotificationContext';
 
 interface DebtTrackerProps {
   debts: Debt[];
@@ -21,6 +22,7 @@ export default function DebtTracker({
   onMakeDebtPayment,
   currency,
 }: DebtTrackerProps) {
+  const { showToast } = useNotifications();
   // Add Debt States
   const [isAddingDebt, setIsAddingDebt] = useState(false);
   const [source, setSource] = useState('');
@@ -48,7 +50,7 @@ export default function DebtTracker({
     e.preventDefault();
     const amountVal = parseFloat(totalDebt) || 0;
     if (!source.trim() || amountVal <= 0 || !dueDate) {
-      alert('Debt source, total positive amount, and due date are strictly required.');
+      showToast('error', 'Debt source, total positive amount, and due date are strictly required.');
       return;
     }
 
@@ -65,7 +67,7 @@ export default function DebtTracker({
     setDueDate('');
     setNotes('');
     setIsAddingDebt(false);
-    alert('Outstanding Debt registered successfully! Tracks updated.');
+    showToast('success', 'Outstanding Debt registered successfully! Tracks updated.');
   };
 
   const handlePayDebtSubmit = (e: React.FormEvent) => {
@@ -106,7 +108,7 @@ export default function DebtTracker({
     setPayAmount('');
     setPayingDebtId(null);
     setPaymentError(null);
-    alert('Repayment logged! Debt ledger balances correctly.');
+    showToast('success', 'Repayment logged! Debt ledger balances correctly.');
   };
 
   const handleIncreaseDebtSubmit = (e: React.FormEvent) => {
@@ -115,14 +117,14 @@ export default function DebtTracker({
 
     const amountNum = parseFloat(increaseAmount) || 0;
     if (amountNum <= 0) {
-      alert('Amount must be positive.');
+      showToast('error', 'Amount must be positive.');
       return;
     }
 
     onIncreaseDebt(increasingDebtId, amountNum);
     setIncreaseAmount('');
     setIncreasingDebtId(null);
-    alert('Additional debt added successfully.');
+    showToast('success', 'Additional debt added successfully.');
   };
 
   const handleSelectPaymentSource = (value: string) => {
