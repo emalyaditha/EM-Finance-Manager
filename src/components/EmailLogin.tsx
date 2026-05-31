@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { getSupabaseConfig } from '../supabase';
 
 interface EmailLoginProps {
-  onUnlocked: (email: string) => void;
+  onUnlocked: (email: string, rememberMe: boolean) => void;
 }
 
 type AuthStep = 'enter-email' | 'login-password' | 'verify-otp' | 'create-password' | 'reset-otp' | 'reset-password';
@@ -148,7 +148,7 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error);
       
-      onUnlocked(email.trim().toLowerCase());
+      onUnlocked(email.trim().toLowerCase(), rememberMe);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -172,7 +172,7 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error);
       
-      onUnlocked(email.trim().toLowerCase());
+      onUnlocked(email.trim().toLowerCase(), rememberMe);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {

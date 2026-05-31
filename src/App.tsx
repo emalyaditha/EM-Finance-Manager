@@ -797,7 +797,11 @@ export default function App() {
       {/* ======================= RE-LOCK SCREEN INTERACTION ======================= */}
       {!isUnlocked && (
         <EmailLogin
-          onUnlocked={async (email) => {
+          onUnlocked={async (email, rememberMe) => {
+            if (rememberMe) {
+              localStorage.setItem('auth_user_email', email);
+              localStorage.setItem('auth_session_token', `token_vault_session_${Date.now()}`);
+            }
             setUserEmail(email);
             try {
               // Fetch from Supabase immediately after successful login
