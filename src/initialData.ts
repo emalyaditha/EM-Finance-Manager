@@ -1,4 +1,4 @@
-import { AppState, CashAccount, BankCard, CreditCard, CreditCardPurchase, Income, Expense, Debt, Transaction, AppNotification } from './types';
+import { AppState, CashAccount, BankCard, CreditCard, CreditCardPurchase, Income, Expense, Debt, Transaction, AppNotification, Subscription } from './types';
 
 export const INITIAL_CASH_ACCOUNTS: CashAccount[] = [];
 export const INITIAL_CARDS: BankCard[] = [];
@@ -9,6 +9,7 @@ export const INITIAL_EXPENSES: Expense[] = [];
 export const INITIAL_DEBTS: Debt[] = [];
 export const INITIAL_TRANSACTIONS: Transaction[] = [];
 export const INITIAL_NOTIFICATIONS: AppNotification[] = [];
+export const INITIAL_SUBSCRIPTIONS: Subscription[] = [];
 
 export const DEFAULT_APP_STATE: AppState = {
   cashAccounts: INITIAL_CASH_ACCOUNTS,
@@ -20,6 +21,7 @@ export const DEFAULT_APP_STATE: AppState = {
   debts: INITIAL_DEBTS,
   transactions: INITIAL_TRANSACTIONS,
   notifications: INITIAL_NOTIFICATIONS,
+  subscriptions: INITIAL_SUBSCRIPTIONS,
   pinCode: '',
   pinEnabled: false,
   currency: 'Rs.',

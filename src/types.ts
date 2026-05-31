@@ -1,5 +1,5 @@
 export type CategoryIncome = 'Salary' | 'Freelance' | 'Business' | 'Bonus' | 'Commission' | 'Other';
-export type CategoryExpense = 'Food' | 'Transport' | 'Shopping' | 'Utilities' | 'Rent' | 'Entertainment' | 'Medical' | 'Education' | 'Other';
+export type CategoryExpense = 'Food' | 'Transport' | 'Shopping' | 'Utilities' | 'Rent' | 'Entertainment' | 'Medical' | 'Education' | 'Insurance' | 'Other';
 
 export interface CashAccount {
   id: string;
@@ -99,6 +99,19 @@ export interface AppNotification {
   read: boolean;
 }
 
+export interface Subscription {
+  id: string;
+  name: string;
+  amount: number;
+  billingCycle: 'Monthly' | 'Yearly';
+  dueDate: string; // "YYYY-MM-DD" or standard calendar date
+  category: CategoryExpense;
+  status: 'Active' | 'Paused' | 'Cancelled';
+  paymentMethodId?: string;
+  paymentMethodType?: 'cash' | 'card';
+  lastPaidDate?: string; // YYYY-MM-DD string
+}
+
 export interface AppState {
   cashAccounts: CashAccount[];
   cards: BankCard[];
@@ -109,6 +122,7 @@ export interface AppState {
   debts: Debt[];
   transactions: Transaction[];
   notifications: AppNotification[];
+  subscriptions: Subscription[]; // Added subscriptions list
   pinCode: string;
   pinEnabled: boolean;
   currency: string;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppState, CashAccount, BankCard, Income, Expense, Debt, Transaction, AppNotification, CategoryIncome, CategoryExpense, CreditCard as DbCreditCard, CreditCardPurchase } from './types';
+import { AppState, CashAccount, BankCard, Income, Expense, Debt, Transaction, AppNotification, CategoryIncome, CategoryExpense, CreditCard as DbCreditCard, CreditCardPurchase, Subscription } from './types';
 import { DEFAULT_APP_STATE } from './initialData';
 import { exportStateAsJSON } from './utils';
 import { 
@@ -14,6 +14,7 @@ import EmailLogin from './components/EmailLogin';
 import NotificationDrawer from './components/NotificationDrawer';
 import CashCardManagement from './components/CashCardManagement';
 import InflowsOutflows from './components/InflowsOutflows';
+import SubscriptionManagement from './components/SubscriptionManagement';
 import DebtTracker from './components/DebtTracker';
 import TransferFunds from './components/TransferFunds';
 import CreditCardManagement from './components/CreditCardManagement';
@@ -340,6 +341,162 @@ export default function App() {
     }));
   };
 
+  // Subscriptions Actions Setup
+  const handleAddSubscription = (subData: Omit<Subscription, 'id'>) => {
+    const newSub: Subscription = {
+      ...subData,
+      id: `sub-${Date.now()}`,
+    };
+    updateState(prev => ({
+      ...prev,
+      subscriptions: [...(prev.subscriptions || []), newSub],
+    }));
+  };
+
+  const handleDeleteSubscription = (id: string) => {
+    updateState(prev => ({
+      ...prev,
+      subscriptions: (prev.subscriptions || []).filter(sub => sub.id !== id),
+    }));
+  };
+
+  const handleToggleSubscriptionStatus = (id: string, currentStatus: 'Active' | 'Paused' | 'Cancelled') => {
+    updateState(prev => ({
+      ...prev,
+      subscriptions: (prev.subscriptions || []).map(sub => {
+        if (sub.id === id) {
+          const nextStatus: 'Active' | 'Paused' | 'Cancelled' = currentStatus === 'Active' ? 'Paused' : 'Active';
+          return { ...sub, status: nextStatus };
+        }
+        return sub;
+      }),
+    }));
+  };
+
+  const handlePaySubscription = (
+    subId: string,
+    accountId: string,
+    accountType: 'cash' | 'card',
+    paymentDate: string
+  ) => {
+    updateState(prev => {
+      const sub = (prev.subscriptions || []).find(s => s.id === subId);
+      if (!sub) return prev;
+
+      // Deduct TARGET card/cash balances
+      let updatedCash = [...prev.cashAccounts];
+      let updatedCards = [...prev.cards];
+      let newAlertNotifications: AppNotification[] = [];
+
+      let accountName = '';
+      if (accountType === 'cash') {
+        updatedCash = updatedCash.map(c => {
+          if (c.id === accountId) {
+            accountName = c.name;
+            const nextVal = c.balance - sub.amount;
+            if (nextVal < 5000) {
+              newAlertNotifications.push({
+                id: `nt-alert-${Date.now()}`,
+                type: 'alert',
+                message: `Low balance alert! ${c.name} is critically low: ${prev.currency} ${nextVal.toLocaleString()}`,
+                date: new Date().toISOString().split('T')[0],
+                read: false,
+              });
+            }
+            return { ...c, balance: nextVal };
+          }
+          return c;
+        });
+      } else {
+        updatedCards = updatedCards.map(c => {
+          if (c.id === accountId) {
+            accountName = `${c.bankName} - ${c.cardName}`;
+            const nextVal = c.currentBalance - sub.amount;
+            if (nextVal < 10000) {
+              newAlertNotifications.push({
+                id: `nt-alert-${Date.now()}`,
+                type: 'alert',
+                message: `Low balance alert! Card ${c.cardName} balance is low: ${prev.currency} ${nextVal.toLocaleString()}`,
+                date: new Date().toISOString().split('T')[0],
+                read: false,
+              });
+            }
+            return { ...c, currentBalance: nextVal };
+          }
+          return c;
+        });
+      }
+
+      // Update next due date and lastPaidDate for the paid subscription
+      const currentDueDate = new Date(sub.dueDate);
+      if (sub.billingCycle === 'Monthly') {
+        currentDueDate.setMonth(currentDueDate.getMonth() + 1);
+      } else {
+        currentDueDate.setFullYear(currentDueDate.getFullYear() + 1);
+      }
+      const nextDueDateStr = currentDueDate.toISOString().split('T')[0];
+
+      const updatedSubscriptions = (prev.subscriptions || []).map(s => {
+        if (s.id === subId) {
+          return {
+            ...s,
+            dueDate: nextDueDateStr,
+            lastPaidDate: paymentDate,
+            paymentMethodId: accountId,
+            paymentMethodType: accountType,
+          };
+        }
+        return s;
+      });
+
+      // Draft unified Expense item
+      const expenseId = `exp-${Date.now()}`;
+      const transactionId = `trans-${Date.now()}`;
+      const newExpense: Expense = {
+        id: expenseId,
+        title: `Subscription: ${sub.name}`,
+        description: `Recurring payment plan: ${sub.billingCycle} - paid from ${accountName}`,
+        amount: sub.amount,
+        date: paymentDate,
+        category: sub.category,
+        paymentMethodId: accountId,
+        paymentMethodType: accountType,
+      };
+
+      // Draft unified Journal ledger transaction record
+      const newTransaction: Transaction = {
+        id: transactionId,
+        type: 'expense',
+        title: `Subscription Settle: ${sub.name}`,
+        amount: sub.amount,
+        date: paymentDate,
+        category: sub.category,
+        accountId,
+        accountType,
+        referenceId: expenseId,
+      };
+
+      // Add a nice confirmation system notification
+      const systemNotif: AppNotification = {
+        id: `nt-sys-${Date.now()}`,
+        type: 'system',
+        message: `Subscription paid: ${sub.name} is settled (${prev.currency} ${sub.amount.toLocaleString()}). Next due: ${nextDueDateStr}.`,
+        date: new Date().toISOString().split('T')[0],
+        read: false,
+      };
+
+      return {
+        ...prev,
+        subscriptions: updatedSubscriptions,
+        expenses: [...prev.expenses, newExpense],
+        cashAccounts: updatedCash,
+        cards: updatedCards,
+        transactions: [newTransaction, ...prev.transactions],
+        notifications: [systemNotif, ...newAlertNotifications, ...prev.notifications],
+      };
+    });
+  };
+
   const handleAddCreditCardPurchase = (purchase: Omit<CreditCardPurchase, 'id'>) => {
     updateState(prev => {
         const updatedCards = prev.cards.map(c => c.id === purchase.cardId ? { ...c, currentBalance: c.currentBalance + purchase.amount } : c);
@@ -586,6 +743,7 @@ export default function App() {
       let updatedIncomes = [...prev.incomes];
       let updatedExpenses = [...prev.expenses];
       let updatedDebts = [...prev.debts];
+      let updatedCreditCardPurchases = [...prev.creditCardPurchases];
 
       const reverseAmount = (amount: number, accountId: string, accountType: string, isIncome: boolean) => {
         if (accountType === 'cash') {
@@ -603,30 +761,39 @@ export default function App() {
         updatedIncomes = updatedIncomes.filter(i => i.id !== tx.referenceId);
         if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, true);
       } else if (tx.type === 'expense') {
-        if(tx.title.startsWith('Credit Card Purchase:')) {
-            // Liability purchase: previously added to balance, need to subtract
-            updatedCards = updatedCards.map(c => c.id === tx.accountId ? { ...c, currentBalance: c.currentBalance - tx.amount } : c);
+        if (tx.title.startsWith('Credit Card Purchase:')) {
+          // Liability purchase: previously added to balance, need to subtract
+          updatedCards = updatedCards.map(c => c.id === tx.accountId ? { ...c, currentBalance: c.currentBalance - tx.amount } : c);
+          updatedCreditCardPurchases = updatedCreditCardPurchases.filter(p => p.id !== tx.referenceId);
         } else {
-            updatedExpenses = updatedExpenses.filter(e => e.id !== tx.referenceId);
-            if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+          updatedExpenses = updatedExpenses.filter(e => e.id !== tx.referenceId);
+          if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
         }
       } else if (tx.type === 'debt_payment') {
-        if(tx.title.startsWith('Credit Card Settlement:')) {
-            // Settlement: previously subtracted from balance, need to add
-            updatedCards = updatedCards.map(c => c.id === tx.accountId ? { ...c, currentBalance: c.currentBalance + tx.amount } : c);
+        if (tx.title.startsWith('Credit Card Settlement:')) {
+          // Put the money back into the source wallet/account that made the payment
+          if (tx.accountId && tx.accountType) {
+            reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+          }
+          // Restore the outstanding balance of the settled credit card (add the settled amount back to the card)
+          const cardNamePart = tx.title.replace('Credit Card Settlement:', '').trim();
+          const targetCc = prev.cards.find(c => c.cardName === cardNamePart && c.cardType === 'Credit');
+          if (targetCc) {
+            updatedCards = updatedCards.map(c => c.id === targetCc.id ? { ...c, currentBalance: c.currentBalance + tx.amount } : c);
+          }
         } else {
-            if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
-            updatedDebts = updatedDebts.map(d => {
-              const removedPayment = d.payments?.find(p => p.id === tx.referenceId);
-              if (removedPayment) {
-                return {
-                  ...d,
-                  remainingAmount: d.remainingAmount + Math.abs(removedPayment.amount),
-                  payments: d.payments.filter(p => p.id !== tx.referenceId)
-                };
-              }
-              return d;
-            });
+          if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+          updatedDebts = updatedDebts.map(d => {
+            const removedPayment = d.payments?.find(p => p.id === tx.referenceId);
+            if (removedPayment) {
+              return {
+                ...d,
+                remainingAmount: d.remainingAmount + Math.abs(removedPayment.amount),
+                payments: d.payments.filter(p => p.id !== tx.referenceId)
+              };
+            }
+            return d;
+          });
         }
       } else if (tx.type === 'deposit') {
         if (tx.accountId) reverseAmount(tx.amount, tx.accountId, 'cash', true);
@@ -641,7 +808,8 @@ export default function App() {
         cards: updatedCards,
         incomes: updatedIncomes,
         expenses: updatedExpenses,
-        debts: updatedDebts
+        debts: updatedDebts,
+        creditCardPurchases: updatedCreditCardPurchases
       };
     });
     setEditingTransactionId(null);
@@ -1249,13 +1417,29 @@ export default function App() {
 
               {/* =================== CASE: TAB: INFLOWS_OUTFLOWS =================== */}
               {activeTab === 'inflow_outflow' && (
-                <InflowsOutflows
-                  cashAccounts={state.cashAccounts}
-                  cards={state.cards}
-                  onAddIncome={handleAddIncome}
-                  onAddExpense={handleAddExpense}
-                  currency={state.currency}
-                />
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+                  <div className="md:col-span-5 w-full">
+                    <InflowsOutflows
+                      cashAccounts={state.cashAccounts}
+                      cards={state.cards}
+                      onAddIncome={handleAddIncome}
+                      onAddExpense={handleAddExpense}
+                      currency={state.currency}
+                    />
+                  </div>
+                  <div className="md:col-span-7 w-full">
+                    <SubscriptionManagement
+                      subscriptions={state.subscriptions || []}
+                      cashAccounts={state.cashAccounts}
+                      cards={state.cards}
+                      currency={state.currency}
+                      onAddSubscription={handleAddSubscription}
+                      onDeleteSubscription={handleDeleteSubscription}
+                      onToggleSubscriptionStatus={handleToggleSubscriptionStatus}
+                      onPaySubscription={handlePaySubscription}
+                    />
+                  </div>
+                </div>
               )}
 
               {/* =================== CASE: TAB: DEBTS =================== */}

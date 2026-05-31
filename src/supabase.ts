@@ -56,7 +56,8 @@ const FALLBACK_COLUMNS: { [tableName: string]: string[] } = {
   debts: ['id', 'user_email', 'debt_source', 'total_amount', 'remaining_amount', 'due_date', 'notes', 'payments', 'updated_at'],
   incomes: ['id', 'user_email', 'amount', 'date', 'source', 'category', 'target_account_id', 'target_type', 'updated_at'],
   expenses: ['id', 'user_email', 'title', 'description', 'amount', 'date', 'category', 'payment_method_id', 'payment_method_type', 'updated_at'],
-  notifications: ['id', 'user_email', 'type', 'message', 'date', 'read', 'updated_at']
+  notifications: ['id', 'user_email', 'type', 'message', 'date', 'read', 'updated_at'],
+  subscriptions: ['id', 'user_email', 'name', 'amount', 'billing_cycle', 'due_date', 'category', 'status', 'payment_method_id', 'payment_method_type', 'last_paid_date', 'updated_at']
 };
 
 let detectedColumnsCache: { [tableName: string]: string[] } | null = null;
@@ -202,7 +203,7 @@ export async function truncateAllDataInSupabase(email: string): Promise<{ succes
   }
 
   try {
-    const tables = ['ledger_states', 'bank_cards', 'cash_accounts', 'transactions', 'debts', 'incomes', 'expenses', 'notifications'];
+    const tables = ['ledger_states', 'bank_cards', 'cash_accounts', 'transactions', 'debts', 'incomes', 'expenses', 'notifications', 'subscriptions'];
     
     for (const table of tables) {
       let emailCol = 'user_email';
@@ -623,6 +624,61 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
       errorDetails.push(`Notifications block: ${notifSyncErr.message || notifSyncErr}`);
     }
 
+    // 9. Synchronize Remote Subscriptions
+    try {
+      const subscriptionsCols = await getColumnsForTable('subscriptions');
+      if (subscriptionsCols.length > 0) {
+        if (state.subscriptions && state.subscriptions.length > 0) {
+          const records = state.subscriptions.map(sub => mapObjectToColumns(sub, subscriptionsCols, email, {
+            id: sub.id,
+            name: sub.name,
+            amount: sub.amount,
+            billing_cycle: sub.billingCycle,
+            billingCycle: sub.billingCycle,
+            due_date: sub.dueDate,
+            dueDate: sub.dueDate,
+            category: sub.category,
+            status: sub.status,
+            payment_method_id: sub.paymentMethodId || null,
+            paymentMethodId: sub.paymentMethodId || null,
+            payment_method_type: sub.paymentMethodType || null,
+            paymentMethodType: sub.paymentMethodType || null,
+            last_paid_date: sub.lastPaidDate || null,
+            lastPaidDate: sub.lastPaidDate || null
+          }));
+          const { error: subErr } = await client.from('subscriptions').upsert(records, { onConflict: 'id' });
+          if (subErr) {
+            console.warn('Supabase Subscriptions Sync Warning:', subErr);
+            errorDetails.push(`Subscriptions Sync: ${subErr.message || subErr.details}`);
+          }
+        }
+
+        // Clean up subscriptions removed locally
+        const activeSubIds = (state.subscriptions || []).map(s => s.id);
+        const emailField = subscriptionsCols.includes('user_email') ? 'user_email' : subscriptionsCols.includes('userEmail') ? 'userEmail' : '';
+        if (emailField) {
+          if (activeSubIds.length > 0) {
+            const { data: existing } = await client.from('subscriptions').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeSubIds.includes(id));
+            if (toDelete.length > 0) {
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('subscriptions').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase subscriptions delete warning:', delErr);
+              }
+            }
+          } else {
+            const { error: delErr } = await client.from('subscriptions').delete().eq(emailField, email);
+            if (delErr) {
+              console.warn('Supabase Subscriptions delete error:', delErr);
+            }
+          }
+        }
+      }
+    } catch (subSyncErr: any) {
+      console.error('Error syncing individual subscriptions:', subSyncErr);
+      errorDetails.push(`Subscriptions block: ${subSyncErr.message || subSyncErr}`);
+    }
+
     if (errorDetails.length > 0) {
       return { success: false, error: errorDetails.join('; ') };
     }
@@ -681,6 +737,19 @@ export async function syncStateFromSupabase(email: string): Promise<{ success: b
       throw new Error('Failed to fetch from one or more relational tables.');
     }
 
+    // Fault-tolerant loading for subscriptions
+    let fetchedSubs: any[] = [];
+    try {
+      const subResult = await client.from('subscriptions').select('*').eq('user_email', email);
+      if (!subResult.error && subResult.data) {
+        fetchedSubs = subResult.data;
+      } else if (subResult.error) {
+        console.warn('Subscriptions table fetch skipped or table does not exist:', subResult.error);
+      }
+    } catch (e) {
+      console.warn('Subscriptions table fetch skipped or table does not exist:', e);
+    }
+
     // Construct the AppState from individual tables with mapping applied
     const reconstructedState: AppState = {
       ...DEFAULT_APP_STATE, // Use initial structure
@@ -690,7 +759,8 @@ export async function syncStateFromSupabase(email: string): Promise<{ success: b
       debts: (debts.data || []).map(mapDatabaseResultToState),
       incomes: (incomes.data || []).map(mapDatabaseResultToState),
       expenses: (expenses.data || []).map(mapDatabaseResultToState),
-      notifications: (notifications.data || []).map(mapDatabaseResultToState)
+      notifications: (notifications.data || []).map(mapDatabaseResultToState),
+      subscriptions: fetchedSubs.map(mapDatabaseResultToState)
     };
 
     return { success: true, state: reconstructedState };
@@ -704,9 +774,32 @@ export async function syncStateFromSupabase(email: string): Promise<{ success: b
  * Returns the copyable SQL commands for setting up Supabase
  */
 export function getSupabaseSQLScript(): string {
-  return `-- ⚠️ UPGRADE MIGRATION (RUN THIS IF YOU ALREADY CREATED TABLES PREVIOUSLY):
--- alter table public.bank_cards add column if not exists "limit" numeric;
--- alter table public.bank_cards add column if not exists is_limit_locked boolean default true;
+  return `-- ⚠️ DATABASE UPGRADE MIGRATION (RUN THIS IN YOUR SQL EDITOR IF YOU HAVE AN EXISTING DB):
+alter table public.bank_cards add column if not exists "limit" numeric;
+alter table public.bank_cards add column if not exists is_limit_locked boolean default true;
+
+-- Upgrade script for subscriptions:
+create table if not exists public.subscriptions (
+  id text not null primary key,
+  user_email text not null,
+  name text not null,
+  amount numeric not null default 0,
+  billing_cycle text not null, -- 'Monthly' | 'Yearly'
+  due_date text not null, -- YYYY-MM-DD or standard date format
+  category text not null,
+  status text not null, -- 'Active' | 'Paused' | 'Cancelled'
+  payment_method_id text,
+  payment_method_type text,
+  last_paid_date text,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.subscriptions enable row level security;
+
+create policy "Allow read accessibility on subscriptions" on public.subscriptions for select using (true);
+create policy "Allow insert/upsert accessibility on subscriptions" on public.subscriptions for insert with check (true);
+create policy "Allow update accessibility on subscriptions" on public.subscriptions for update using (true);
+create policy "Allow delete accessibility on subscriptions" on public.subscriptions for delete using (true);
 
 -- 1. CREATE CORE STATE MATRIX FOR FLUTTER <-> REACT STATE SYNC (Appends row-by-row history list)
 create table if not exists public.ledger_states (

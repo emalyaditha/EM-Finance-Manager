@@ -321,6 +321,7 @@ export default function InflowsOutflows({
                   <option value="Entertainment">Entertainment</option>
                   <option value="Medical">Medical</option>
                   <option value="Education">Education</option>
+                  <option value="Insurance">Insurance</option>
                   <option value="Other">Other Expenses</option>
                 </select>
               </div>
