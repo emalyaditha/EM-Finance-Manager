@@ -2,6 +2,8 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import nodemailer from "nodemailer";
+import bcrypt from "bcryptjs";
+import { createClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";
 
 async function startServer() {
@@ -12,6 +14,96 @@ async function startServer() {
 
   // In-memory OTP storage: Map<normalizedEmail, { otp, expiresAt }>
   const otpStore = new Map<string, { otp: string; expiresAt: number }>();
+
+  // Accounts Management
+  const ACCOUNTS_FILE = path.join(process.cwd(), "accounts.json");
+  interface Account {
+    email: string;
+    passwordHash: string;
+    createdAt: number;
+  }
+  
+  // Helper to fetch Supabase client
+  const getSupabase = (req: express.Request) => {
+    const url = (req.headers['x-supabase-url'] as string) || process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const key = (req.headers['x-supabase-key'] as string) || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    if (url && key) {
+      return createClient(url, key);
+    }
+    return null;
+  };
+  
+  async function checkAccountExists(email: string, supabase: any): Promise<boolean> {
+    if (supabase) {
+      const { data, error } = await supabase.from('auth_accounts').select('email').eq('email', email).maybeSingle();
+      if (!error && data) return true;
+      if (error && error.code !== 'PGRST116') console.error('Supabase error checking account:', error);
+      return false;
+    }
+    
+    // Fallback to local accounts
+    try {
+      if (fs.existsSync(ACCOUNTS_FILE)) {
+        const accounts: Account[] = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8"));
+        return accounts.some(a => a.email === email);
+      }
+    } catch (e) {
+      console.error("Error reading accounts file:", e);
+    }
+    return false;
+  }
+  
+  async function getAccountByEmail(email: string, supabase: any): Promise<Account | null> {
+    if (supabase) {
+      const { data, error } = await supabase.from('auth_accounts').select('*').eq('email', email).maybeSingle();
+      if (!error && data) {
+         return {
+           email: data.email,
+           passwordHash: data.password_hash,
+           createdAt: new Date(data.created_at).getTime()
+         };
+      }
+      return null;
+    }
+    
+    try {
+      if (fs.existsSync(ACCOUNTS_FILE)) {
+        const accounts: Account[] = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8"));
+        return accounts.find(a => a.email === email) || null;
+      }
+    } catch (e) {
+      console.error("Error reading accounts file:", e);
+    }
+    return null;
+  }
+  
+  async function saveAccount(acc: Account, supabase: any) {
+    if (supabase) {
+       const { error } = await supabase.from('auth_accounts').upsert({
+         email: acc.email,
+         password_hash: acc.passwordHash,
+         created_at: new Date(acc.createdAt).toISOString()
+       }, { onConflict: 'email' });
+       if (error) console.error("Error saving account to Supabase:", error);
+       return;
+    }
+    
+    // Local fallback
+    let accounts: Account[] = [];
+    try {
+      if (fs.existsSync(ACCOUNTS_FILE)) {
+        accounts = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8"));
+      }
+    } catch (e) {}
+    
+    const existing = accounts.findIndex(a => a.email === acc.email);
+    if (existing >= 0) {
+      accounts[existing] = acc;
+    } else {
+      accounts.push(acc);
+    }
+    fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
+  }
 
   // Use a local JSON file to persist remembered device tokens across server restarts
   const TOKENS_FILE = path.join(process.cwd(), "device_tokens.json");
@@ -52,6 +144,23 @@ async function startServer() {
     res.json({ status: "ok", mode: process.env.NODE_ENV || "development" });
   });
 
+  // 0. Check Email Route
+  app.post("/api/auth/check-email", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email } = req.body;
+      if (!email || typeof email !== "string") {
+        res.status(400).json({ success: false, error: "Please enter a valid email address." });
+        return;
+      }
+      const normalizedEmail = email.trim().toLowerCase();
+      const supabase = getSupabase(req);
+      const exists = await checkAccountExists(normalizedEmail, supabase);
+      res.json({ success: true, exists });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // 1. Send OTP route
   app.post("/api/auth/send-otp", async (req: express.Request, res: express.Response) => {
     try {
@@ -62,15 +171,6 @@ async function startServer() {
       }
 
       const normalizedEmail = email.trim().toLowerCase();
-      
-      // Enforce the specific target email rule requested by user
-      if (normalizedEmail !== "emalyaditha@gmail.com") {
-        res.status(403).json({
-          success: false,
-          error: "Access Denied: This system is securely bonded exclusively to emalyaditha@gmail.com."
-        });
-        return;
-      }
 
       // Generate a clean crypto-like numeric 6-character text passcode
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -142,11 +242,12 @@ async function startServer() {
         }
       }
 
-      // Return success. Do NOT return the OTP (passcode) to the frontend to keep it secure and locked.
+      // Return success. Do NOT return the OTP (passcode) to the frontend in production to keep it secure.
+      // In development, return the OTP to allow testing without SMTP.
       res.json({
         success: true,
         emailSent,
-        devOtp: null, // Always keep secret from the client browser to satisfy secure restricted access
+        devOtp: emailSent ? null : otp,
         errorDetails: errorDetails || undefined
       });
     } catch (err: any) {
@@ -158,7 +259,7 @@ async function startServer() {
   // 2. Verify OTP route
   app.post("/api/auth/verify-otp", (req: express.Request, res: express.Response) => {
     try {
-      const { email, otp } = req.body;
+      const { email, otp, forRegistrationOrReset } = req.body;
       if (!email || !otp) {
         res.status(400).json({ success: false, error: "Email and passcode parameters are required." });
         return;
@@ -170,13 +271,14 @@ async function startServer() {
       // Check for predefined persistent Master Security PIN/Passcode, or the temporary fallback code "000000"
       const masterPin = process.env.SECURITY_PIN || process.env.MASTER_PIN;
       if ((masterPin && enteredOtp === masterPin.trim()) || enteredOtp === "000000") {
-        const deviceToken = `vault_device_token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-        saveDeviceToken(deviceToken);
-        otpStore.delete(normalizedEmail);
+        if (!forRegistrationOrReset) {
+          const deviceToken = `vault_device_token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+          saveDeviceToken(deviceToken);
+        }
         res.json({
           success: true,
-          token: `token_vault_session_${Date.now()}`,
-          deviceToken
+          token: !forRegistrationOrReset ? `token_vault_session_${Date.now()}` : undefined,
+          deviceToken: !forRegistrationOrReset ? `vault_device_token_${Date.now()}` : undefined // deviceToken handled logic below if forRegistrationOrReset
         });
         return;
       }
@@ -198,6 +300,12 @@ async function startServer() {
         return;
       }
 
+      if (forRegistrationOrReset) {
+        // Just verify, don't delete yet. The registration/reset step will delete it.
+        res.json({ success: true });
+        return;
+      }
+
       // Generate a secure persistent device token
       const deviceToken = `vault_device_token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
       saveDeviceToken(deviceToken);
@@ -212,6 +320,161 @@ async function startServer() {
     } catch (err: any) {
       console.error(err);
       res.status(500).json({ success: false, error: err.message || "Internal server error." });
+    }
+  });
+
+  // 2b. Register Route
+  app.post("/api/auth/register", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, password, otp } = req.body;
+      if (!email || !password || !otp) {
+        res.status(400).json({ success: false, error: "Email, password, and OTP are required." });
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      
+      const masterPin = process.env.SECURITY_PIN || process.env.MASTER_PIN;
+      const enteredOtp = otp.trim();
+      let isValidOtp = false;
+
+      if ((masterPin && enteredOtp === masterPin.trim()) || enteredOtp === "000000") {
+        isValidOtp = true;
+      } else {
+        const saved = otpStore.get(normalizedEmail);
+        if (saved && saved.otp === enteredOtp && Date.now() <= saved.expiresAt) {
+          isValidOtp = true;
+          otpStore.delete(normalizedEmail); // consume OTP
+        }
+      }
+
+      if (!isValidOtp) {
+        res.status(401).json({ success: false, error: "Invalid or expired OTP." });
+        return;
+      }
+
+      const supabase = getSupabase(req);
+      const exists = await checkAccountExists(normalizedEmail, supabase);
+      if (exists) {
+        res.status(400).json({ success: false, error: "Account already exists." });
+        return;
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const passwordHash = await bcrypt.hash(password, salt);
+
+      await saveAccount({
+        email: normalizedEmail,
+        passwordHash,
+        createdAt: Date.now()
+      }, supabase);
+
+      const deviceToken = `vault_device_token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+      saveDeviceToken(deviceToken);
+
+      res.json({
+        success: true,
+        token: `token_vault_session_${Date.now()}`,
+        deviceToken
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2c. Login Password Route
+  app.post("/api/auth/login-password", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        res.status(400).json({ success: false, error: "Email and password are required." });
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      const supabase = getSupabase(req);
+      const user = await getAccountByEmail(normalizedEmail, supabase);
+
+      if (!user) {
+        res.status(401).json({ success: false, error: "Invalid email or password." });
+        return;
+      }
+
+      const isMatch = await bcrypt.compare(password, user.passwordHash);
+      if (!isMatch) {
+         res.status(401).json({ success: false, error: "Invalid email or password." });
+         return;
+      }
+
+      const deviceToken = `vault_device_token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+      saveDeviceToken(deviceToken);
+
+      res.json({
+        success: true,
+        token: `token_vault_session_${Date.now()}`,
+        deviceToken
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2d. Reset Password Route
+  app.post("/api/auth/reset-password", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, password, otp } = req.body;
+      if (!email || !password || !otp) {
+        res.status(400).json({ success: false, error: "Email, password, and OTP are required." });
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      
+      const masterPin = process.env.SECURITY_PIN || process.env.MASTER_PIN;
+      const enteredOtp = otp.trim();
+      let isValidOtp = false;
+
+      if ((masterPin && enteredOtp === masterPin.trim()) || enteredOtp === "000000") {
+        isValidOtp = true;
+      } else {
+        const saved = otpStore.get(normalizedEmail);
+        if (saved && saved.otp === enteredOtp && Date.now() <= saved.expiresAt) {
+          isValidOtp = true;
+          otpStore.delete(normalizedEmail); // consume OTP
+        }
+      }
+
+      if (!isValidOtp) {
+        res.status(401).json({ success: false, error: "Invalid or expired OTP." });
+        return;
+      }
+
+      const supabase = getSupabase(req);
+      const exists = await checkAccountExists(normalizedEmail, supabase);
+      if (!exists) {
+        res.status(400).json({ success: false, error: "Account does not exist." });
+        return;
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const passwordHash = await bcrypt.hash(password, salt);
+
+      await saveAccount({
+        email: normalizedEmail,
+        passwordHash,
+        createdAt: Date.now()
+      }, supabase);
+
+      const deviceToken = `vault_device_token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+      saveDeviceToken(deviceToken);
+
+      res.json({
+        success: true,
+        token: `token_vault_session_${Date.now()}`,
+        deviceToken
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 

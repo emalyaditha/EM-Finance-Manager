@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { AppState } from './types';
+import { DEFAULT_APP_STATE } from './initialData';
 
 const URL_STORAGE_KEY = 'cashflow_supabase_url_v1';
 const KEY_STORAGE_KEY = 'cashflow_supabase_key_v1';
@@ -49,7 +50,7 @@ export function getSupabaseClient(): SupabaseClient | null {
 
 // Fallback column list if Supabase REST OpenAPI inspection is unavailable
 const FALLBACK_COLUMNS: { [tableName: string]: string[] } = {
-  bank_cards: ['id', 'user_email', 'card_name', 'bank_name', 'card_type', 'current_balance', 'card_number', 'updated_at'],
+  bank_cards: ['id', 'user_email', 'card_name', 'bank_name', 'card_type', 'current_balance', 'card_number', 'is_canceled', 'updated_at'],
   cash_accounts: ['id', 'user_email', 'name', 'balance', 'updated_at'],
   transactions: ['id', 'user_email', 'type', 'title', 'amount', 'date', 'category', 'account_id', 'account_type', 'target_account_id', 'target_account_type', 'reference_id', 'updated_at'],
   debts: ['id', 'user_email', 'debt_source', 'total_amount', 'remaining_amount', 'due_date', 'notes', 'payments', 'updated_at'],
@@ -77,6 +78,7 @@ async function getColumnsForTable(tableName: string): Promise<string[]> {
       const firstLine = data.split('\n')[0].trim();
       const cols = firstLine.split(',').map(c => c.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
       if (cols.length > 0) {
+        if (tableName === 'bank_cards' && !cols.includes('is_canceled')) cols.push('is_canceled');
         if (!detectedColumnsCache) detectedColumnsCache = {};
         detectedColumnsCache[tableName] = cols;
         console.log(`Detected database columns for ${tableName} via CSV headers:`, cols);
@@ -103,6 +105,7 @@ async function getColumnsForTable(tableName: string): Promise<string[]> {
         const tableDef = swagger.definitions?.[tableName];
         if (tableDef && tableDef.properties) {
           const cols = Object.keys(tableDef.properties);
+          if (tableName === 'bank_cards' && !cols.includes('is_canceled')) cols.push('is_canceled');
           if (!detectedColumnsCache) detectedColumnsCache = {};
           detectedColumnsCache[tableName] = cols;
           return cols;
@@ -138,6 +141,7 @@ function mapObjectToColumns(item: any, columns: string[], email: string, mapping
 
   // Pre-load explicit mapping overrides
   for (const [colName, val] of Object.entries(mappingRules)) {
+    // If the database has it
     if (columns.includes(colName)) {
       result[colName] = val;
     }
@@ -171,6 +175,54 @@ function mapObjectToColumns(item: any, columns: string[], email: string, mapping
 }
 
 /**
+ * Explicitly forces a card cancellation directly in the database
+ */
+export async function forceCancelCardInSupabase(email: string, cardId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) return;
+  try {
+    const { data, error } = await client.from('bank_cards').update({ is_canceled: true }).eq('user_email', email).eq('id', cardId).select();
+    if (error) {
+      console.warn(`Supabase explicit cancel update failed:`, error);
+    } else {
+      console.log(`DEBUG: Forced canceled status for card ${cardId} in DB. Result:`, data);
+    }
+  } catch(err) {
+    console.warn(`Failed to execute explicit card cancel override`, err);
+  }
+}
+
+/**
+ * Truncates all user data from the database completely.
+ */
+export async function truncateAllDataInSupabase(email: string): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, error: 'Supabase URL or Anon Key is missing or invalid.' };
+  }
+
+  try {
+    const tables = ['ledger_states', 'bank_cards', 'cash_accounts', 'transactions', 'debts', 'incomes', 'expenses', 'notifications'];
+    
+    for (const table of tables) {
+      let emailCol = 'user_email';
+      if (['incomes', 'expenses', 'debts', 'notifications', 'transactions'].includes(table)) {
+        emailCol = 'userEmail';
+      }
+      
+      let { error } = await client.from(table).delete().eq(emailCol, email);
+      if (error && error.message.includes(`column "${emailCol}" does not exist`)) {
+        const fallbackCol = emailCol === 'userEmail' ? 'user_email' : 'userEmail';
+        const { error: err2 } = await client.from(table).delete().eq(fallbackCol, email);
+      }
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || JSON.stringify(err) };
+  }
+}
+
+/**
  * Pushes the current application state to the supabase ledger_states table
  * AND synchronizes all relational tables: bank_cards, cash_accounts, transactions
  */
@@ -201,20 +253,35 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
       const cardsCols = await getColumnsForTable('bank_cards');
       if (cardsCols.length > 0) {
         if (state.cards && state.cards.length > 0) {
-          const records = state.cards.map(card => mapObjectToColumns(card, cardsCols, email, {
-            id: card.id,
-            current_balance: card.currentBalance,
-            currentBalance: card.currentBalance,
-            card_name: card.cardName,
-            cardName: card.cardName,
-            bank_name: card.bankName,
-            bankName: card.bankName,
-            card_type: card.cardType,
-            cardType: card.cardType,
-            card_number: card.cardNumber || null,
-            cardNumber: card.cardNumber || null
-          }));
-          const { error: cardsErr } = await client.from('bank_cards').upsert(records, { onConflict: 'id' });
+          const records = state.cards.map(card => {
+            const mapped = mapObjectToColumns(card, cardsCols, email, {
+              id: card.id,
+              current_balance: card.currentBalance,
+              currentBalance: card.currentBalance,
+              card_name: card.cardName,
+              cardName: card.cardName,
+              bank_name: card.bankName,
+              bankName: card.bankName,
+              card_type: card.cardType,
+              cardType: card.cardType,
+              card_number: card.cardNumber || null,
+              cardNumber: card.cardNumber || null
+            });
+            // PostgREST upsert determines columns from the FIRST object in the array.
+            // If we omit is_canceled on the first item, it ignores is_canceled for ALL items.
+            // Therefore, we MUST explicitly map it boolean across the board.
+            mapped.is_canceled = Boolean(card.isCanceled === true || (card as any).is_canceled === true);
+            
+            // Clean up aliases so we don't send duplicate random columns
+            delete mapped.is_cancelled;
+            delete mapped.isCanceled;
+            
+            return mapped;
+          });
+          
+          console.log("DEBUG: bank_cards upsert payload properties:", records.map(r => ({ id: r.id, is_canceled: r.is_canceled })));
+
+          const { data, error: cardsErr } = await client.from('bank_cards').upsert(records, { onConflict: 'id' }).select();
           if (cardsErr) {
             console.warn('Supabase Bank Cards Sync Warning:', cardsErr);
             errorDetails.push(`Bank Cards Sync: ${cardsErr.message || cardsErr.details}`);
@@ -226,9 +293,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
         const emailField = cardsCols.includes('user_email') ? 'user_email' : cardsCols.includes('userEmail') ? 'userEmail' : '';
         if (emailField) {
           if (activeCardIds.length > 0) {
-            const { error: delErr } = await client.from('bank_cards').delete().eq(emailField, email).not('id', 'in', activeCardIds);
-            if (delErr) {
-              console.warn('Supabase Bank Cards delete warning:', delErr);
+            const { data: existing } = await client.from('bank_cards').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeCardIds.includes(id));
+            if (toDelete.length > 0) {
+              // chunk up deletions if needed
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('bank_cards').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase bank_cards delete warning:', delErr);
+              }
             }
           } else {
             const { error: delErr } = await client.from('bank_cards').delete().eq(emailField, email);
@@ -265,9 +337,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
         const emailField = cashCols.includes('user_email') ? 'user_email' : cashCols.includes('userEmail') ? 'userEmail' : '';
         if (emailField) {
           if (activeCashIds.length > 0) {
-            const { error: delErr } = await client.from('cash_accounts').delete().eq(emailField, email).not('id', 'in', activeCashIds);
-            if (delErr) {
-              console.warn('Supabase Cash Accounts delete warning:', delErr);
+            const { data: existing } = await client.from('cash_accounts').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeCashIds.includes(id));
+            if (toDelete.length > 0) {
+              // chunk up deletions if needed
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('cash_accounts').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase cash_accounts delete warning:', delErr);
+              }
             }
           } else {
             const { error: delErr } = await client.from('cash_accounts').delete().eq(emailField, email);
@@ -317,11 +394,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
         const emailField = txCols.includes('user_email') ? 'user_email' : txCols.includes('userEmail') ? 'userEmail' : '';
         if (emailField) {
           if (activeTxIds.length > 0) {
-            // Under PostgREST URL lengths constraints, slice check list to maximum 150 items for safety
-            const sliceList = activeTxIds.slice(0, 150);
-            const { error: delErr } = await client.from('transactions').delete().eq(emailField, email).not('id', 'in', sliceList);
-            if (delErr) {
-              console.warn('Supabase Transactions delete warning:', delErr);
+            const { data: existing } = await client.from('transactions').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeTxIds.includes(id));
+            if (toDelete.length > 0) {
+              // chunk up deletions if needed
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('transactions').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase transactions delete warning:', delErr);
+              }
             }
           } else {
             const { error: delErr } = await client.from('transactions').delete().eq(emailField, email);
@@ -366,9 +446,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
         const emailField = debtsCols.includes('user_email') ? 'user_email' : debtsCols.includes('userEmail') ? 'userEmail' : '';
         if (emailField) {
           if (activeDebtIds.length > 0) {
-            const { error: delErr } = await client.from('debts').delete().eq(emailField, email).not('id', 'in', activeDebtIds);
-            if (delErr) {
-              console.warn('Supabase Debts delete warning:', delErr);
+            const { data: existing } = await client.from('debts').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeDebtIds.includes(id));
+            if (toDelete.length > 0) {
+              // chunk up deletions if needed
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('debts').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase debts delete warning:', delErr);
+              }
             }
           } else {
             const { error: delErr } = await client.from('debts').delete().eq(emailField, email);
@@ -411,9 +496,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
         const emailField = incomesCols.includes('user_email') ? 'user_email' : incomesCols.includes('userEmail') ? 'userEmail' : '';
         if (emailField) {
           if (activeIncomeIds.length > 0) {
-            const { error: delErr } = await client.from('incomes').delete().eq(emailField, email).not('id', 'in', activeIncomeIds);
-            if (delErr) {
-              console.warn('Supabase Incomes delete warning:', delErr);
+            const { data: existing } = await client.from('incomes').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeIncomeIds.includes(id));
+            if (toDelete.length > 0) {
+              // chunk up deletions if needed
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('incomes').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase incomes delete warning:', delErr);
+              }
             }
           } else {
             const { error: delErr } = await client.from('incomes').delete().eq(emailField, email);
@@ -457,9 +547,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
         const emailField = expensesCols.includes('user_email') ? 'user_email' : expensesCols.includes('userEmail') ? 'userEmail' : '';
         if (emailField) {
           if (activeExpenseIds.length > 0) {
-            const { error: delErr } = await client.from('expenses').delete().eq(emailField, email).not('id', 'in', activeExpenseIds);
-            if (delErr) {
-              console.warn('Supabase Expenses delete warning:', delErr);
+            const { data: existing } = await client.from('expenses').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeExpenseIds.includes(id));
+            if (toDelete.length > 0) {
+              // chunk up deletions if needed
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('expenses').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase expenses delete warning:', delErr);
+              }
             }
           } else {
             const { error: delErr } = await client.from('expenses').delete().eq(emailField, email);
@@ -498,9 +593,14 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
         const emailField = notificationsCols.includes('user_email') ? 'user_email' : notificationsCols.includes('userEmail') ? 'userEmail' : '';
         if (emailField) {
           if (activeNotifIds.length > 0) {
-            const { error: delErr } = await client.from('notifications').delete().eq(emailField, email).not('id', 'in', activeNotifIds);
-            if (delErr) {
-              console.warn('Supabase Notifications delete warning:', delErr);
+            const { data: existing } = await client.from('notifications').select('id').eq(emailField, email);
+            const toDelete = (existing || []).map((e: any) => e.id).filter((id: string) => !activeNotifIds.includes(id));
+            if (toDelete.length > 0) {
+              // chunk up deletions if needed
+              for (let i = 0; i < toDelete.length; i += 100) {
+                const { error: delErr } = await client.from('notifications').delete().in('id', toDelete.slice(i, i + 100));
+                if (delErr) console.warn('Supabase notifications delete warning:', delErr);
+              }
             }
           } else {
             const { error: delErr } = await client.from('notifications').delete().eq(emailField, email);
@@ -526,8 +626,27 @@ export async function syncStateToSupabase(email: string, state: AppState): Promi
   }
 }
 
+
 /**
- * Pulls the latest state from the supabase ledger_states table
+ * Generic mapper to convert database snake_case records to camelCase for AppState.
+ */
+function mapDatabaseResultToState(item: any): any {
+  const result: any = {};
+  for (const key of Object.keys(item)) {
+    const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+    result[camelKey] = item[key];
+  }
+  
+  // Safe-guard aliases for common typos and boolean transformations
+  if (result.isCancelled !== undefined && result.isCanceled === undefined) {
+    result.isCanceled = result.isCancelled;
+  }
+  
+  return result;
+}
+
+/**
+ * Pulls the latest state from the supabase ledger_states table AND all relational tables.
  */
 export async function syncStateFromSupabase(email: string): Promise<{ success: boolean; state?: AppState; error?: string }> {
   const client = getSupabaseClient();
@@ -536,23 +655,37 @@ export async function syncStateFromSupabase(email: string): Promise<{ success: b
   }
 
   try {
-    const { data, error } = await client
-      .from('ledger_states')
-      .select('state')
-      .eq('user_email', email)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // 1. Force reconstruction of AppState from relational tables to ensure complete data sync.
+    console.warn('Syncing state from relational tables...');
+    
+    const [cards, cash, transactions, debts, incomes, expenses, notifications] = await Promise.all([
+      client.from('bank_cards').select('*').eq('user_email', email),
+      client.from('cash_accounts').select('*').eq('user_email', email),
+      client.from('transactions').select('*').eq('user_email', email),
+      client.from('debts').select('*').eq('user_email', email),
+      client.from('incomes').select('*').eq('user_email', email),
+      client.from('expenses').select('*').eq('user_email', email),
+      client.from('notifications').select('*').eq('user_email', email)
+    ]);
 
-    if (error) {
-      throw error;
+    // Handle possible errors
+    if (cards.error || cash.error || transactions.error || debts.error || incomes.error || expenses.error || notifications.error) {
+      throw new Error('Failed to fetch from one or more relational tables.');
     }
 
-    if (!data || !data.state) {
-      return { success: false, error: 'No synced ledger record found for this owner identity.' };
-    }
+    // Construct the AppState from individual tables with mapping applied
+    const reconstructedState: AppState = {
+      ...DEFAULT_APP_STATE, // Use initial structure
+      cards: (cards.data || []).map(mapDatabaseResultToState),
+      cashAccounts: (cash.data || []).map(mapDatabaseResultToState),
+      transactions: (transactions.data || []).map(mapDatabaseResultToState),
+      debts: (debts.data || []).map(mapDatabaseResultToState),
+      incomes: (incomes.data || []).map(mapDatabaseResultToState),
+      expenses: (expenses.data || []).map(mapDatabaseResultToState),
+      notifications: (notifications.data || []).map(mapDatabaseResultToState)
+    };
 
-    return { success: true, state: data.state as AppState };
+    return { success: true, state: reconstructedState };
   } catch (err: any) {
     console.error('Supabase State Pull Error:', err);
     return { success: false, error: err.message || 'Database transaction error.' };
@@ -583,6 +716,7 @@ create table if not exists public.bank_cards (
   card_type text not null, -- 'Debit' | 'Credit'
   current_balance numeric not null default 0,
   card_number text,
+  is_canceled boolean not null default false,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -673,7 +807,23 @@ alter table public.incomes enable row level security;
 alter table public.expenses enable row level security;
 alter table public.notifications enable row level security;
 
--- 10. SETUP PUBLIC BYPASS CRUD POLICIES (React Client-Side Syncing Enabled)
+-- 10. CREATE RELATIONAL AUTH ACCOUNTS TABLE
+create table if not exists public.auth_accounts (
+  id uuid default gen_random_uuid() primary key,
+  email text not null unique,
+  password_hash text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- ENABLE RLS FOR AUTH ACCOUNTS
+alter table public.auth_accounts enable row level security;
+
+-- SETUP POLICIES FOR AUTH ACCOUNTS
+create policy "Allow read accessibility on auth_accounts" on public.auth_accounts for select using (true);
+create policy "Allow insert accessibility on auth_accounts" on public.auth_accounts for insert with check (true);
+create policy "Allow update accessibility on auth_accounts" on public.auth_accounts for update using (true);
+
+-- 11. SETUP PUBLIC BYPASS CRUD POLICIES (React Client-Side Syncing Enabled)
 create policy "Allow read accessibility on states" on public.ledger_states for select using (true);
 create policy "Allow insert/upsert accessibility on states" on public.ledger_states for insert with check (true);
 create policy "Allow update accessibility on states" on public.ledger_states for update using (true);

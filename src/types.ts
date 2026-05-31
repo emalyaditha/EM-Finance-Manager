@@ -14,6 +14,7 @@ export interface BankCard {
   cardType: 'Debit' | 'Credit';
   currentBalance: number;
   cardNumber?: string; // masked card number e.g. **** 4242
+  isCanceled?: boolean; // Support soft delete / cancel status
 }
 
 export interface Income {

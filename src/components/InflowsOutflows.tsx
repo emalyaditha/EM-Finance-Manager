@@ -246,7 +246,7 @@ export default function InflowsOutflows({
                     ))}
                   </optgroup>
                   <optgroup label="Bank Card Accounts">
-                    {cards.map(card => (
+                    {cards.filter(c => !c.isCanceled).map(card => (
                       <option key={card.id} value={`${card.id}:card`}>{card.bankName} - {card.cardName}</option>
                     ))}
                   </optgroup>
@@ -350,7 +350,7 @@ export default function InflowsOutflows({
                     ))}
                   </optgroup>
                   <optgroup label="Saved Bank Cards">
-                    {cards.map(card => (
+                    {cards.filter(c => !c.isCanceled).map(card => (
                       <option key={card.id} value={`${card.id}:card`}>{card.bankName} - {card.cardName} ({currency}{card.currentBalance})</option>
                     ))}
                   </optgroup>

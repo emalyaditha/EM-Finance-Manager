@@ -42,6 +42,9 @@ export default function CashCardManagement({
   const [qtyAction, setQtyAction] = useState('');
   const [actionType, setActionType] = useState<'deposit' | 'withdraw' | null>(null);
 
+  // Deletion confirmation
+  const [cardToDelete, setCardToDelete] = useState<string | null>(null);
+
   const handleCreateCash = (e: React.FormEvent) => {
     e.preventDefault();
     if (!cashName.trim()) {
@@ -400,19 +403,22 @@ export default function CashCardManagement({
         <div className="space-y-4">
           {cards.length === 0 ? (
             <div className="p-8 text-center text-zinc-500 text-xs border border-dashed border-zinc-800 rounded-xl">
-              No cards loaded yet. Add a credit/debit card.
+              No active cards. Add a credit/debit card.
             </div>
           ) : (
             cards.map((card, idx) => {
               // Assign a theme based on card position or choose randomly
               const themesCodes = ['obsidian', 'sapphire', 'emerald', 'copper', 'ruby'];
               const derivedTheme = themesCodes[idx % themesCodes.length];
+              const isCanceled = card.isCanceled || (card as any).is_canceled;
 
               return (
                 <div
                   key={card.id}
                   id={`card-view-${card.id}`}
-                  className={`relative p-5 rounded-2xl bg-gradient-to-br ${getCardGradient(derivedTheme)} border shadow-xl flex flex-col justify-between h-36 overflow-hidden transition-transform duration-300 hover:scale-[1.01]`}
+                  className={`relative p-5 rounded-2xl bg-gradient-to-br ${getCardGradient(derivedTheme)} border shadow-xl flex flex-col justify-between h-36 overflow-hidden transition-all duration-300 ${
+                    isCanceled ? 'opacity-50 filter grayscale contrast-75 brightness-90 hover:grayscale-0 hover:opacity-85' : 'hover:scale-[1.01]'
+                  }`}
                 >
                   {/* Glowing background circles */}
                   <div className="absolute -top-10 -right-10 w-24 h-24 rounded-full bg-white/5 blur-xl pointer-events-none" />
@@ -420,17 +426,30 @@ export default function CashCardManagement({
                   <div className="flex justify-between items-start z-10">
                     <div>
                       <p className="text-[10px] uppercase font-bold tracking-wider text-white/50">{card.bankName}</p>
-                      <h4 className="text-xs font-semibold text-white mt-0.5">{card.cardName}</h4>
+                      <h4 className="text-xs font-semibold text-white mt-0.5 flex items-center gap-1.5">
+                        <span>{card.cardName}</span>
+                        {isCanceled && (
+                          <span className="text-[8px] bg-red-950/80 text-red-500 border border-red-900/40 px-1 py-0.5 rounded font-bold uppercase tracking-widest font-mono">
+                            INACTIVE
+                          </span>
+                        )}
+                      </h4>
                     </div>
-                    <span className="text-[9px] uppercase tracking-widest font-mono font-bold bg-white/10 px-2 py-0.5 rounded text-white/90">
-                      {card.cardType}
-                    </span>
+                    {isCanceled ? (
+                      <span className="text-[9px] uppercase tracking-widest font-mono font-bold bg-rose-950/80 px-2 py-0.5 rounded text-rose-400 border border-rose-900/50">
+                        CANCELED
+                      </span>
+                    ) : (
+                      <span className="text-[9px] uppercase tracking-widest font-mono font-bold bg-white/10 px-2 py-0.5 rounded text-white/90">
+                        {card.cardType}
+                      </span>
+                    )}
                   </div>
 
                   <div className="z-10 flex justify-between items-end">
                     <div>
                       <span className="text-[10px] text-white/40 block">Available Balance</span>
-                      <span className="text-sm font-bold font-mono text-white tracking-tight">
+                      <span className={`text-sm font-bold font-mono tracking-tight ${isCanceled ? 'text-white/50 line-through' : 'text-white'}`}>
                         {currency} {card.currentBalance.toLocaleString()}
                       </span>
                     </div>
@@ -439,14 +458,19 @@ export default function CashCardManagement({
                       <span className="text-[10px] font-mono text-white/60 tracking-widest">
                         {card.cardNumber || '**** **** **** 0000'}
                       </span>
-                      <button
-                        onClick={() => {
-                          if (confirm(`Remove card ${card.cardName}?`)) onDeleteCard(card.id);
-                        }}
-                        className="text-[10px] text-rose-400 opacity-60 hover:opacity-100 flex items-center gap-1 mt-1 font-semibold"
-                      >
-                        <Trash2 size={11} /> Cancel Card
-                      </button>
+                      {isCanceled ? (
+                        <span className="text-[9px] text-red-400/80 font-mono font-bold uppercase mt-1 tracking-wider flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                          CANCELED SECURELY
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setCardToDelete(card.id)}
+                          className="text-[10px] text-rose-400 opacity-60 hover:opacity-100 flex items-center gap-1 mt-1 font-semibold cursor-pointer"
+                        >
+                          <Trash2 size={11} /> Delete
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -455,6 +479,37 @@ export default function CashCardManagement({
           )}
         </div>
       </div>
+      {/* Confirmation Dialog */}
+      {cardToDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animation-fade-in">
+          <div className="bg-[#0a0a0a] border border-zinc-800 p-6 rounded-2xl shadow-2xl max-w-xs w-full">
+            <h3 className="text-white font-bold text-sm mb-2 flex items-center gap-2">
+              <Trash2 size={16} className="text-red-500" />
+              Delete Card?
+            </h3>
+            <p className="text-xs text-zinc-400 mb-6">
+              Are you sure you want to delete <strong className="text-white">{cards.find(c => c.id === cardToDelete)?.cardName}</strong>? This action will mark it as inactive.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setCardToDelete(null)}
+                className="px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onDeleteCard(cardToDelete);
+                  setCardToDelete(null);
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors shadow-lg shadow-red-500/20 cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

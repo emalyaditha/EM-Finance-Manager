@@ -11,13 +11,15 @@ import {
   saveSupabaseConfig, 
   syncStateToSupabase, 
   syncStateFromSupabase, 
-  getSupabaseSQLScript 
+  getSupabaseSQLScript,
+  truncateAllDataInSupabase
 } from '../supabase';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   state: AppState;
+  userEmail: string;
   updateState: (updater: (prev: AppState) => AppState) => void;
   exportStateAsJSON: (state: AppState) => void;
   handleJSONRestore: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -28,6 +30,7 @@ export default function SettingsModal({
   isOpen,
   onClose,
   state,
+  userEmail,
   updateState,
   exportStateAsJSON,
   handleJSONRestore,
@@ -48,8 +51,7 @@ export default function SettingsModal({
   const [sqlCopied, setSqlCopied] = useState(false);
   const [flutterCopied, setFlutterCopied] = useState(false);
 
-  // Authenticated email (from bonded workspace standard: emalyaditha@gmail.com)
-  const userEmail = 'emalyaditha@gmail.com';
+  // Authenticated email passed via props
 
   // Load backend configurations
   useEffect(() => {
@@ -119,6 +121,37 @@ export default function SettingsModal({
       setSyncStatus('error');
       setSyncMessage(res.error || 'No backup record found or auth rejected.');
     }
+  };
+
+  const handleWipeDatabase = async () => {
+    if (!window.confirm('WARNING: Are you sure you want to completely wipe all your records? This will delete all transactions, ledgers, debts, incomes from both local state and the cloud database completely. This action cannot be undone.')) {
+      return;
+    }
+    
+    // Always reset local state first
+    updateState(prev => ({
+      ...prev,
+      cashAccounts: [],
+      cards: [],
+      transactions: [],
+      debts: [],
+      incomes: [],
+      expenses: [],
+      notifications: []
+    }));
+
+    setSyncStatus('loading');
+    setSyncMessage('Truncating database...');
+    
+    const result = await truncateAllDataInSupabase(userEmail);
+    if (!result.success) {
+      setSyncStatus('error');
+      setSyncMessage(result.error || 'Wiped local state. Note: Cloud DB was not connected or failed to truncate.');
+      return;
+    }
+
+    setSyncStatus('success');
+    setSyncMessage('Database explicitly truncated/wiped completely.');
   };
 
   const copyToClipboard = (text: string, type: 'sql' | 'flutter') => {
@@ -502,6 +535,16 @@ class CloudSyncService {
                       onChange={handleJSONRestore}
                       className="w-full text-xs text-zinc-500 file:mr-2 file:py-1.5 file:px-2.5 file:rounded-md file:border-0 file:text-[10px] file:font-semibold file:bg-zinc-800 file:text-white file:cursor-pointer"
                     />
+                  </div>
+                  
+                  <div className="space-y-1.5 pt-4 border-t border-red-900/30">
+                    <button
+                      onClick={handleWipeDatabase}
+                      className="w-full py-2.5 bg-red-950/20 border border-red-900/50 rounded-xl hover:bg-red-950/40 hover:text-white hover:border-red-500/50 transition-colors text-xs font-semibold text-red-500 flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-[0.99]"
+                    >
+                      <Shield size={13} /> DANGER: Wipe Cloud Database & Local State
+                    </button>
+                    <p className="text-[9px] text-red-500/80 text-center uppercase tracking-wider font-mono">This action is irreversible.</p>
                   </div>
                 </div>
               </div>

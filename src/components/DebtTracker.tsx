@@ -7,6 +7,7 @@ interface DebtTrackerProps {
   cashAccounts: CashAccount[];
   cards: BankCard[];
   onAddDebt: (debt: Omit<Debt, 'id' | 'payments' | 'remainingAmount'>) => void;
+  onIncreaseDebt: (debtId: string, amount: number) => void;
   onMakeDebtPayment: (debtId: string, amount: number, paidFromId: string, paidFromType: 'cash' | 'card') => void;
   currency: string;
 }
@@ -16,6 +17,7 @@ export default function DebtTracker({
   cashAccounts,
   cards,
   onAddDebt,
+  onIncreaseDebt,
   onMakeDebtPayment,
   currency,
 }: DebtTrackerProps) {
@@ -28,7 +30,9 @@ export default function DebtTracker({
 
   // Make Payment States
   const [payingDebtId, setPayingDebtId] = useState<string | null>(null);
+  const [increasingDebtId, setIncreasingDebtId] = useState<string | null>(null);
   const [payAmount, setPayAmount] = useState('');
+  const [increaseAmount, setIncreaseAmount] = useState('');
   const [paySourceId, setPaySourceId] = useState('');
   const [paySourceType, setPaySourceType] = useState<'cash' | 'card'>('cash');
   const [paymentError, setPaymentError] = useState<string | null>(null);
@@ -103,6 +107,22 @@ export default function DebtTracker({
     setPayingDebtId(null);
     setPaymentError(null);
     alert('Repayment logged! Debt ledger balances correctly.');
+  };
+
+  const handleIncreaseDebtSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!increasingDebtId) return;
+
+    const amountNum = parseFloat(increaseAmount) || 0;
+    if (amountNum <= 0) {
+      alert('Amount must be positive.');
+      return;
+    }
+
+    onIncreaseDebt(increasingDebtId, amountNum);
+    setIncreaseAmount('');
+    setIncreasingDebtId(null);
+    alert('Additional debt added successfully.');
   };
 
   const handleSelectPaymentSource = (value: string) => {
@@ -273,16 +293,64 @@ export default function DebtTracker({
                 </p>
 
                 {/* Repayment Action Controls */}
-                {!isFullyPaid && payingDebtId !== debt.id && (
-                  <button
-                    onClick={() => {
-                      setPayingDebtId(debt.id);
-                      setPaymentError(null);
-                    }}
-                    className="w-full py-2.5 bg-[#050505] border border-zinc-800 rounded-xl font-bold text-xs text-zinc-350 hover:text-white hover:border-zinc-500 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    Settle Partial Payment
-                  </button>
+                {!isFullyPaid && payingDebtId !== debt.id && increasingDebtId !== debt.id && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setPayingDebtId(debt.id);
+                        setPaymentError(null);
+                      }}
+                      className="flex-1 py-2.5 bg-[#050505] border border-zinc-800 rounded-xl font-bold text-xs text-zinc-350 hover:text-white hover:border-zinc-500 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      Settle Partial Payment
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIncreasingDebtId(debt.id);
+                      }}
+                      className="flex-1 py-2.5 bg-[#050505] border border-zinc-800 rounded-xl font-bold text-xs text-zinc-350 hover:text-white hover:border-zinc-500 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      Add More Debt
+                    </button>
+                  </div>
+                )}
+
+                {/* Adding more debt form */}
+                {increasingDebtId === debt.id && (
+                  <form onSubmit={handleIncreaseDebtSubmit} className="bg-[#050505] border border-zinc-800 p-4 rounded-xl space-y-3.5 animation-fade-in shadow-xl">
+                     <div className="flex justify-between items-center pb-2 border-b border-zinc-900">
+                      <span className="text-[10px] font-bold text-white uppercase tracking-wider flex items-center gap-1 text-amber-400 font-mono">
+                        <Plus size={12} className="animate-pulse" />
+                        Add More Funds
+                      </span>
+                      <button
+                        type="button"
+                        className="text-[10px] font-mono font-bold uppercase text-zinc-500 hover:text-white"
+                        onClick={() => {
+                          setIncreasingDebtId(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <div>
+                        <label className="text-[10px] text-[#888888] font-bold block mb-1">Additional Amount ({currency})</label>
+                        <input
+                          type="number"
+                          placeholder="e.g. 500"
+                          value={increaseAmount}
+                          required
+                          onChange={(e) => setIncreaseAmount(e.target.value)}
+                          className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white rounded-xl text-xs px-3 py-2 focus:outline-none focus:border-zinc-500 font-mono"
+                        />
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full py-2.5 bg-white text-black font-semibold text-xs rounded-xl hover:bg-zinc-200 transition-colors shadow cursor-pointer font-mono font-bold uppercase tracking-wider"
+                    >
+                      Update Total Debt
+                    </button>
+                  </form>
                 )}
 
                 {/* Paying Down partial form */}
@@ -335,7 +403,7 @@ export default function DebtTracker({
                             ))}
                           </optgroup>
                           <optgroup label="Cards">
-                            {cards.map(card => (
+                            {cards.filter(c => !c.isCanceled).map(card => (
                               <option key={card.id} value={`${card.id}:card`}>{card.bankName} (Bal: {currency}{card.currentBalance})</option>
                             ))}
                           </optgroup>

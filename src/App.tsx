@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, CashAccount, BankCard, Income, Expense, Debt, Transaction, AppNotification, CategoryIncome, CategoryExpense } from './types';
 import { DEFAULT_APP_STATE } from './initialData';
-import { loadStateFromStorage, saveStateToStorage, exportStateAsJSON } from './utils';
+import { exportStateAsJSON } from './utils';
 import { 
   Plus, Search, Bell, CreditCard, Wallet, Percent, ChevronRight, 
   TrendingUp, User, Lock, Unlock, Settings, HelpCircle, RefreshCw, 
@@ -17,11 +17,12 @@ import InflowsOutflows from './components/InflowsOutflows';
 import DebtTracker from './components/DebtTracker';
 import ReportsCentre from './components/ReportsCentre';
 import SettingsModal from './components/SettingsModal';
-import { getSupabaseConfig, syncStateToSupabase } from './supabase';
+import TransactionEditModal from './components/TransactionEditModal';
+import { getSupabaseConfig, syncStateToSupabase, syncStateFromSupabase, forceCancelCardInSupabase } from './supabase';
 
 export default function App() {
   // 1. Core State
-  const [state, setState] = useState<AppState>(() => loadStateFromStorage(DEFAULT_APP_STATE));
+  const [state, setState] = useState<AppState>(DEFAULT_APP_STATE);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'inflow_outflow' | 'debts' | 'reports'>('dashboard');
@@ -31,6 +32,8 @@ export default function App() {
   const [newPinCode, setNewPinCode] = useState('');
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string>('');
 
   // Supabase real-time status tracker
   const [realtimeSyncStatus, setRealtimeSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error' | 'disabled'>('idle');
@@ -44,33 +47,11 @@ export default function App() {
   // Verify remembered device on mount
   useEffect(() => {
     const verifyDevice = async () => {
-      const storedToken = localStorage.getItem('vault_device_token');
-      if (!storedToken) {
-        setIsCheckingAuth(false);
-        setIsUnlocked(false);
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/auth/verify-device', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceToken: storedToken })
-        });
-        const data = await res.json();
-        if (data && data.success) {
-          setIsUnlocked(true);
-        } else {
-          // Token is invalid or expired
-          localStorage.removeItem('vault_device_token');
-          setIsUnlocked(false);
-        }
-      } catch (err) {
-        console.error("Device token verification failed:", err);
-        setIsUnlocked(false);
-      } finally {
-        setIsCheckingAuth(false);
-      }
+      // NOTE: Removed localStorage check for device_token. 
+      // The user wants full cloud sync without relying on localStorage.
+      // We start in a locked state and force login.
+      setIsCheckingAuth(false);
+      setIsUnlocked(false);
     };
 
     verifyDevice();
@@ -80,13 +61,17 @@ export default function App() {
   const updateState = (updater: (prev: AppState) => AppState) => {
     setState(prev => {
       const next = updater(prev);
-      saveStateToStorage(next);
       return next;
     });
   };
 
   // Automatic background push to Supabase if config exists and auto-sync is checked
   useEffect(() => {
+    if (!isUnlocked) {
+      setRealtimeSyncStatus('idle');
+      return;
+    }
+
     const { url, key, autoSync } = getSupabaseConfig();
     
     if (!url || !key) {
@@ -103,7 +88,8 @@ export default function App() {
     setRealtimeSyncError(null);
 
     const syncTimeout = setTimeout(() => {
-      syncStateToSupabase('emalyaditha@gmail.com', state)
+      if (!userEmail) return;
+      syncStateToSupabase(userEmail, state)
         .then(res => {
           if (!res.success) {
             console.warn('Real-time Supabase Auto-sync warned:', res.error);
@@ -123,7 +109,7 @@ export default function App() {
     }, 1500);
 
     return () => clearTimeout(syncTimeout);
-  }, [state, isSettingsOpen]);
+  }, [state, isSettingsOpen, isUnlocked]);
 
   // 2. FINANCIAL IMPLEMENTATION LOGICS (SMART AUTOMATION RULES)
 
@@ -317,6 +303,19 @@ export default function App() {
     });
   };
 
+  const handleIncreaseDebt = (debtId: string, amount: number) => {
+    updateState(prev => {
+      return {
+        ...prev,
+        debts: prev.debts.map(d => d.id === debtId ? { 
+          ...d, 
+          totalAmount: d.totalAmount + amount,
+          remainingAmount: d.remainingAmount + amount
+        } : d)
+      };
+    });
+  };
+
   // Rule: Partial Debt Repayment Deductions
   const handleMakeDebtPayment = (
     debtId: string,
@@ -451,11 +450,25 @@ export default function App() {
     }));
   };
 
-  const handleDeleteCard = (id: string) => {
-    updateState(prev => ({
-      ...prev,
-      cards: prev.cards.filter(c => c.id !== id),
-    }));
+  const handleDeleteCard = (idToDelete: string) => {
+    console.log(`DEBUG: Soft-canceling card with id: "${idToDelete}"`);
+    
+    // Explicit guaranteed database override for this critical action
+    if (userEmail) forceCancelCardInSupabase(userEmail, idToDelete);
+
+    updateState(prev => {
+      const updatedCards = prev.cards.map(card => {
+        if (String(card.id) === String(idToDelete)) {
+          console.log("DEBUG: Matching card found inside mapped state, setting isCanceled to true", card);
+          return { ...card, isCanceled: true };
+        }
+        return card;
+      });
+      return {
+        ...prev,
+        cards: updatedCards,
+      };
+    });
   };
 
   const handleDeleteCashAccount = (id: string) => {
@@ -466,6 +479,148 @@ export default function App() {
   };
 
   // Notification Modifiers
+  const handleDeleteTransaction = (txId: string) => {
+    updateState(prev => {
+      const tx = prev.transactions.find(t => t.id === txId);
+      if (!tx) return prev;
+
+      let updatedCash = [...prev.cashAccounts];
+      let updatedCards = [...prev.cards];
+      let updatedIncomes = [...prev.incomes];
+      let updatedExpenses = [...prev.expenses];
+      let updatedDebts = [...prev.debts];
+
+      const reverseAmount = (amount: number, accountId: string, accountType: string, isIncome: boolean) => {
+        if (accountType === 'cash') {
+          updatedCash = updatedCash.map(c => 
+            c.id === accountId ? { ...c, balance: c.balance + (isIncome ? -amount : amount) } : c
+          );
+        } else if (accountType === 'card') {
+          updatedCards = updatedCards.map(c => 
+            c.id === accountId ? { ...c, currentBalance: c.currentBalance + (isIncome ? -amount : amount) } : c
+          );
+        }
+      };
+
+      if (tx.type === 'income') {
+        updatedIncomes = updatedIncomes.filter(i => i.id !== tx.referenceId);
+        if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, true);
+      } else if (tx.type === 'expense') {
+        updatedExpenses = updatedExpenses.filter(e => e.id !== tx.referenceId);
+        if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+      } else if (tx.type === 'debt_payment') {
+        if (tx.accountId && tx.accountType) reverseAmount(tx.amount, tx.accountId, tx.accountType, false);
+        updatedDebts = updatedDebts.map(d => {
+          const removedPayment = d.payments?.find(p => p.id === tx.referenceId);
+          if (removedPayment) {
+            return {
+              ...d,
+              remainingAmount: d.remainingAmount + Math.abs(removedPayment.amount),
+              payments: d.payments.filter(p => p.id !== tx.referenceId)
+            };
+          }
+          return d;
+        });
+      } else if (tx.type === 'deposit') {
+        if (tx.accountId) reverseAmount(tx.amount, tx.accountId, 'cash', true);
+      } else if (tx.type === 'withdrawal') {
+        if (tx.accountId) reverseAmount(tx.amount, tx.accountId, 'cash', false);
+      }
+
+      return {
+        ...prev,
+        transactions: prev.transactions.filter(t => t.id !== txId),
+        cashAccounts: updatedCash,
+        cards: updatedCards,
+        incomes: updatedIncomes,
+        expenses: updatedExpenses,
+        debts: updatedDebts
+      };
+    });
+    setEditingTransactionId(null);
+  };
+
+  const handleEditTransaction = (txId: string, newData: any) => {
+    updateState(prev => {
+      const tx = prev.transactions.find(t => t.id === txId);
+      if (!tx) return prev;
+
+      let updatedCash = [...prev.cashAccounts];
+      let updatedCards = [...prev.cards];
+
+      const changeBalance = (amountAdded: number, accountId: string, accountType: string) => {
+        if (accountType === 'cash') {
+          updatedCash = updatedCash.map(c => 
+            c.id === accountId ? { ...c, balance: c.balance + amountAdded } : c
+          );
+        } else if (accountType === 'card') {
+          updatedCards = updatedCards.map(c => 
+            c.id === accountId ? { ...c, currentBalance: c.currentBalance + amountAdded } : c
+          );
+        }
+      };
+
+      // 1. Reverse the old transaction
+      if (tx.type === 'income' || tx.type === 'deposit') {
+        if (tx.accountId && tx.accountType) changeBalance(-tx.amount, tx.accountId, tx.accountType);
+      } else if (tx.type === 'expense' || tx.type === 'debt_payment' || tx.type === 'withdrawal') {
+        if (tx.accountId && tx.accountType) changeBalance(tx.amount, tx.accountId, tx.accountType);
+      }
+
+      // 2. Apply the new transaction
+      if (tx.type === 'income' || tx.type === 'deposit') {
+        changeBalance(newData.amount, newData.accountId, newData.accountType);
+      } else if (tx.type === 'expense' || tx.type === 'debt_payment' || tx.type === 'withdrawal') {
+        changeBalance(-newData.amount, newData.accountId, newData.accountType);
+      }
+
+      let updatedIncomes = [...prev.incomes];
+      let updatedExpenses = [...prev.expenses];
+      let updatedDebts = [...prev.debts];
+
+      if (tx.type === 'income') {
+        updatedIncomes = updatedIncomes.map(i => i.id === tx.referenceId ? {
+          ...i, amount: newData.amount, title: newData.title, date: newData.date, category: newData.category,
+          source: newData.title, targetAccountId: newData.accountId, targetType: newData.accountType
+        } : i);
+      } else if (tx.type === 'expense') {
+        updatedExpenses = updatedExpenses.map(e => e.id === tx.referenceId ? {
+          ...e, amount: newData.amount, title: newData.title, date: newData.date, category: newData.category,
+          paymentMethodId: newData.accountId, paymentMethodType: newData.accountType
+        } : e);
+      } else if (tx.type === 'debt_payment') {
+        updatedDebts = updatedDebts.map(d => {
+          const removedPayment = d.payments?.find(p => p.id === tx.referenceId);
+          if (removedPayment) {
+            const difference = newData.amount - tx.amount;
+            return {
+              ...d,
+              remainingAmount: d.remainingAmount - difference,
+              payments: d.payments.map(p => p.id === tx.referenceId ? { 
+                ...p, amount: newData.amount, date: newData.date, paidFromId: newData.accountId, paidFromType: newData.accountType 
+              } : p)
+            };
+          }
+          return d;
+        });
+      }
+
+      return {
+        ...prev,
+        cashAccounts: updatedCash,
+        cards: updatedCards,
+        incomes: updatedIncomes,
+        expenses: updatedExpenses,
+        debts: updatedDebts,
+        transactions: prev.transactions.map(t => t.id === txId ? {
+          ...t,
+          ...newData
+        } : t)
+      };
+    });
+    setEditingTransactionId(null);
+  };
+
   const handleMarkNotificationRead = (id: string) => {
     updateState(prev => ({
       ...prev,
@@ -512,9 +667,9 @@ export default function App() {
 
   // 3. AGGREGATES & BALANCES COMPUTERS
   const totalCashAmount = state.cashAccounts.reduce((sum, c) => sum + c.balance, 0);
-  const totalCardsAmount = state.cards.reduce((sum, c) => sum + c.currentBalance, 0);
+  const totalCardsAmount = state.cards.filter(c => !c.isCanceled).reduce((sum, c) => sum + c.currentBalance, 0);
   const totalDebtsAmount = state.debts.reduce((sum, d) => sum + d.remainingAmount, 0);
-  const aggregateActiveWealth = totalCashAmount + totalCardsAmount;
+  const aggregateActiveWealth = totalCashAmount + totalCardsAmount - totalDebtsAmount;
 
   const currentMonthInflow = state.transactions
     .filter(t => t.type === 'income' && t.date.includes('-05-')) // Filter to May
@@ -623,7 +778,20 @@ export default function App() {
       {/* ======================= RE-LOCK SCREEN INTERACTION ======================= */}
       {!isUnlocked && (
         <EmailLogin
-          onUnlocked={() => {
+          onUnlocked={async (email) => {
+            setUserEmail(email);
+            try {
+              // Fetch from Supabase immediately after successful login
+              const result = await syncStateFromSupabase(email);
+              if (result.success && result.state) {
+                setState(result.state);
+              } else if (result.error) {
+                console.warn("Could not sync from database:", result.error);
+                // Continue anyway
+              }
+            } catch (err) {
+              console.warn("Fatal error syncing from database, continuing offline...", err);
+            }
             setIsUnlocked(true);
             setActiveTab('dashboard');
           }}
@@ -796,7 +964,7 @@ export default function App() {
                     </div>
 
                     <div className="flex gap-3 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }} id="cards-slider">
-                      {state.cards.map((card) => (
+                      {state.cards.filter(c => !c.isCanceled).map((card) => (
                         <div key={card.id} className="w-[85%] bg-gradient-to-br from-zinc-850 to-zinc-950 border border-zinc-750 p-4 rounded-[20px] shrink-0 space-y-4 shadow-lg hover:border-zinc-600 transition-all">
                           <div className="flex justify-between items-start">
                             <div>
@@ -823,19 +991,26 @@ export default function App() {
                       {state.transactions.slice(0, 4).map((t) => {
                         const isIncome = t.type === 'income' || t.type === 'deposit';
                         return (
-                          <div key={t.id} className="p-3 bg-zinc-900/40 border border-zinc-850 rounded-[18px] flex justify-between items-center hover:border-zinc-700 transition-colors">
+                          <div 
+                            key={t.id} 
+                            onClick={() => setEditingTransactionId(t.id)}
+                            className="p-3 bg-zinc-900/40 border border-zinc-850 rounded-[18px] flex justify-between items-center hover:border-zinc-700 transition-colors cursor-pointer group"
+                          >
                             <div className="flex items-center gap-3">
-                              <div className={`p-2.5 rounded-xl shrink-0 text-center ${
+                              <div className={`p-2.5 rounded-xl shrink-0 text-center flex items-center justify-center ${
                                 isIncome ? 'bg-emerald-990 bg-emerald-950/20 text-emerald-400' : 'bg-rose-950/20 text-rose-400'
                               }`}>
                                 {isIncome ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
                               </div>
-                              <div>
-                                <h5 className="text-xs font-semibold text-white truncate max-w-[170px]">{t.title}</h5>
-                                <span className="text-[9px] uppercase tracking-wider font-mono text-zinc-500">{t.category} • {t.date}</span>
+                              <div className="flex items-center gap-2 max-w-[170px]">
+                                <div>
+                                  <h5 className="text-xs font-semibold text-white truncate">{t.title}</h5>
+                                  <span className="text-[9px] uppercase tracking-wider font-mono text-zinc-500">{t.category} • {t.date}</span>
+                                </div>
+                                <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center bg-zinc-800 text-white text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0">EDIT</span>
                               </div>
                             </div>
-                            <span className={`text-xs font-bold font-mono ${
+                            <span className={`text-xs font-bold font-mono shrink-0 ${
                               isIncome ? 'text-emerald-400' : 'text-rose-400'
                             }`}>
                               {isIncome ? '+' : '-'}{state.currency}{t.amount.toLocaleString()}
@@ -881,6 +1056,7 @@ export default function App() {
                   cashAccounts={state.cashAccounts}
                   cards={state.cards}
                   onAddDebt={handleAddDebt}
+                  onIncreaseDebt={handleIncreaseDebt}
                   onMakeDebtPayment={handleMakeDebtPayment}
                   currency={state.currency}
                 />
@@ -935,13 +1111,14 @@ export default function App() {
             {/* System Settings overlay modal */}
             <SettingsModal
               state={state}
+              userEmail={userEmail}
               updateState={updateState}
               exportStateAsJSON={exportStateAsJSON}
               handleJSONRestore={handleJSONRestore}
               isOpen={isSettingsOpen}
               onClose={() => setIsSettingsOpen(false)}
               onLogout={() => {
-                localStorage.removeItem('vault_device_token');
+                setState(DEFAULT_APP_STATE);
                 setIsUnlocked(false);
                 setIsSettingsOpen(false);
               }}
@@ -998,7 +1175,7 @@ export default function App() {
                 {state.cashAccounts.map(c => (
                   <option key={c.id} value={c.id}>Cash: {c.name}</option>
                 ))}
-                {state.cards.map(card => (
+                {state.cards.filter(c => !c.isCanceled).map(card => (
                   <option key={card.id} value={card.id}>Card: {card.cardName}</option>
                 ))}
               </select>
@@ -1015,7 +1192,12 @@ export default function App() {
               filteredHistory.map((t) => {
                 const isInc = t.type === 'income' || t.type === 'deposit';
                 return (
-                  <div key={t.id} id={`audit-card-${t.id}`} className="p-3.5 bg-[#050505]/60 border border-zinc-850 rounded-xl space-y-1.5 hover:border-zinc-700 transition-all duration-300">
+                  <div 
+                    key={t.id} 
+                    id={`audit-card-${t.id}`} 
+                    className="p-3.5 bg-[#050505]/60 border border-zinc-850 rounded-xl space-y-1.5 hover:border-zinc-700 transition-all duration-300 cursor-pointer group"
+                    onClick={() => setEditingTransactionId(t.id)}
+                  >
                     <div className="flex justify-between items-start">
                       <span className="text-[9px] font-mono tracking-widest text-zinc-550 text-zinc-500 font-bold uppercase">
                         {t.type}
@@ -1026,15 +1208,18 @@ export default function App() {
                     </div>
 
                     <div className="flex justify-between items-center gap-2">
-                      <h4 className="text-xs font-semibold text-white truncate max-w-[155px] font-sans">{t.title}</h4>
-                      <span className={`text-xs font-mono font-bold ${isInc ? 'text-emerald-400' : 'text-rose-450 text-rose-450 text-rose-450 text-rose-400'}`}>
+                      <div className="flex items-center gap-2 max-w-[155px]">
+                        <h4 className="text-xs font-semibold text-white truncate font-sans">{t.title}</h4>
+                        <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center bg-zinc-800 text-white text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0">EDIT</span>
+                      </div>
+                      <span className={`text-xs font-mono font-bold shrink-0 ${isInc ? 'text-emerald-400' : 'text-rose-450 text-rose-450 text-rose-450 text-rose-400'}`}>
                         {isInc ? '+' : '-'}{state.currency}{t.amount.toLocaleString()}
                       </span>
                     </div>
 
                     <div className="flex justify-between items-center text-[10px] text-zinc-500 pt-1.5 border-t border-zinc-800/50">
-                      <span className="font-semibold">{t.category}</span>
-                      <span className="font-mono text-zinc-600">
+                      <span className="font-semibold truncate max-w-[120px]">{t.category}</span>
+                      <span className="font-mono text-zinc-600 shrink-0">
                         {t.accountId ? (
                           `Source: ${t.accountId.substring(0, 8)}...`
                         ) : 'Consolidated Inflow'}
@@ -1048,6 +1233,18 @@ export default function App() {
         </section>
 
       </main>
+
+      {editingTransactionId && (
+        <TransactionEditModal
+          transaction={state.transactions.find(t => t.id === editingTransactionId) || null}
+          cashAccounts={state.cashAccounts}
+          cards={state.cards}
+          onClose={() => setEditingTransactionId(null)}
+          onDelete={handleDeleteTransaction}
+          onSave={handleEditTransaction}
+          currency={state.currency}
+        />
+      )}
 
       {/* 3. WORKSPACE FOOTER CORE STATUS */}
       <footer className="bg-[#050505] border-t border-zinc-900 px-6 py-3.5 z-10 flex flex-col md:flex-row justify-between items-center text-[11px] text-zinc-500 font-mono gap-3">
