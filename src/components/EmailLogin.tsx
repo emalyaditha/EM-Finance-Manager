@@ -15,6 +15,7 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [otpValue, setOtpValue] = useState('');
   
   const [loading, setLoading] = useState(false);
@@ -252,6 +253,16 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
                     placeholder="••••••••"
                     className="w-full bg-[#050507] border border-zinc-855 text-white tracking-[3px] rounded-xl py-3.5 px-4 text-sm font-medium focus:outline-none focus:border-emerald-500 transition-colors font-sans"
                   />
+                  <div className="flex items-center gap-2 mt-2">
+                    <input
+                      type="checkbox"
+                      id="rememberMe"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="accent-emerald-500 w-4 h-4 cursor-pointer"
+                    />
+                    <label htmlFor="rememberMe" className="text-xs text-zinc-400 cursor-pointer">Remember me</label>
+                  </div>
                 </div>
                 <button type="submit" disabled={loading} className="w-full bg-emerald-500 hover:bg-emerald-600 text-neutral-950 font-bold text-sm py-4 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg disabled:opacity-50">
                   {loading ? <RefreshCw className="animate-spin text-neutral-950" size={16} /> : <><ShieldCheck size={16} /><span>Unlock System</span></>}

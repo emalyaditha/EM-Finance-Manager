@@ -47,11 +47,30 @@ export default function App() {
   // Verify remembered device on mount
   useEffect(() => {
     const verifyDevice = async () => {
-      // NOTE: Removed localStorage check for device_token. 
-      // The user wants full cloud sync without relying on localStorage.
-      // We start in a locked state and force login.
+      const email = localStorage.getItem('auth_user_email');
+      const token = localStorage.getItem('auth_session_token');
+      
+      if (email && token) {
+        setUserEmail(email);
+        try {
+          const result = await syncStateFromSupabase(email);
+          if (result.success && result.state) {
+            setState(result.state);
+            setIsUnlocked(true);
+          } else {
+            console.warn("Could not sync from database:", result.error);
+            localStorage.removeItem('auth_user_email');
+            localStorage.removeItem('auth_session_token');
+            setIsUnlocked(false);
+          }
+        } catch (err) {
+          console.warn("Fatal error syncing from database, continuing offline...", err);
+          setIsUnlocked(false);
+        }
+      } else {
+        setIsUnlocked(false);
+      }
       setIsCheckingAuth(false);
-      setIsUnlocked(false);
     };
 
     verifyDevice();
@@ -1118,6 +1137,8 @@ export default function App() {
               isOpen={isSettingsOpen}
               onClose={() => setIsSettingsOpen(false)}
               onLogout={() => {
+                localStorage.removeItem('auth_user_email');
+                localStorage.removeItem('auth_session_token');
                 setState(DEFAULT_APP_STATE);
                 setIsUnlocked(false);
                 setIsSettingsOpen(false);
