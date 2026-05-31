@@ -138,7 +138,7 @@ export default function DebtTracker({
     <div id="debt-tracker-vault-view" className="space-y-6">
       
       {/* 1. Toolbar and Header summary */}
-      <div className="flex justify-between items-center bg-zinc-900/10 p-1">
+      <div className="flex flex-col sm:flex-row justify-between sm:items-center bg-zinc-900/10 p-1 gap-3">
         <div>
           <h3 className="text-xs text-zinc-500 font-bold uppercase tracking-wider font-mono">Passive Liabilities</h3>
           <p className="text-lg font-extrabold text-white">Debt Accounts</p>
@@ -146,7 +146,7 @@ export default function DebtTracker({
         {!isAddingDebt && (
           <button
             onClick={() => setIsAddingDebt(true)}
-            className="text-[10px] font-bold text-white bg-zinc-800 border border-zinc-700 px-3.5 py-2 rounded-xl flex items-center gap-1 hover:border-zinc-500 transition-all cursor-pointer"
+            className="text-[10px] font-bold text-white bg-zinc-800 border border-zinc-700 px-3.5 py-2.5 rounded-xl flex items-center gap-1 hover:border-zinc-500 transition-all cursor-pointer self-start sm:self-auto"
           >
             <Plus size={12} /> Add Debt Record
           </button>
@@ -157,7 +157,7 @@ export default function DebtTracker({
       {isAddingDebt && (
         <form onSubmit={handleCreateDebt} className="bg-[#050505] border border-zinc-800 p-5 rounded-2xl space-y-4 animation-fade-in shadow-xl">
           <div className="flex justify-between items-center border-b border-zinc-900 pb-2.5">
-            <span className="text-xs font-bold text-white uppercase flex items-center gap-1.5 tracking-wider">
+            <span className="text-xs font-bold text-white uppercase flex items-center gap-1.5 tracking-wider font-mono">
               <Plus size={13} className="text-amber-500 animate-pulse" />
               Register Liabilities
             </span>
@@ -183,7 +183,7 @@ export default function DebtTracker({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] text-[#888888] font-bold block mb-1">Principal Amount ({currency})</label>
                 <input
@@ -221,7 +221,7 @@ export default function DebtTracker({
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-white text-black font-semibold text-xs rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer animate-pulse"
+              className="w-full py-2.5 bg-white text-black font-semibold text-xs rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer font-mono font-bold uppercase tracking-wider"
             >
               Verify and Record Liability
             </button>
@@ -232,7 +232,7 @@ export default function DebtTracker({
       {/* 3. Debt Items List */}
       <div className="space-y-4">
         {debts.length === 0 ? (
-          <div className="p-8 text-center text-zinc-550 text-zinc-500 text-xs border border-dashed border-zinc-800 rounded-2xl">
+          <div className="p-8 text-center text-zinc-500 text-xs border border-dashed border-zinc-800 rounded-2xl">
             Congratulations! You are currently completely clear of recorded debts.
           </div>
         ) : (
@@ -248,9 +248,9 @@ export default function DebtTracker({
                 className="bg-zinc-900/50 border border-zinc-850 rounded-[28px] p-6 space-y-4 shadow-xl"
               >
                 {/* Header info */}
-                <div className="flex justify-between items-start">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-3">
                   <div>
-                    <h4 className="text-sm font-bold text-white flex items-center gap-1.5 leading-snug font-sans">
+                    <h4 className="text-sm font-bold text-white flex flex-wrap items-center gap-1.5 leading-snug font-sans">
                       {debt.debtSource}
                       {isFullyPaid && (
                         <span className="bg-emerald-950/40 text-emerald-400 border border-emerald-800/40 text-[9px] px-1.5 py-0.5 rounded-md font-mono font-bold flex items-center gap-0.5 leading-none">
@@ -263,9 +263,9 @@ export default function DebtTracker({
                     </span>
                   </div>
 
-                  <div className="text-right">
-                    <span className="text-[10px] text-[#8aa8bb] text-zinc-500 block uppercase tracking-wider font-mono text-[9px]">Remaining Balance</span>
-                    <span className="font-mono text-xs font-extrabold text-white">
+                  <div className="text-left sm:text-right border-t border-zinc-900/40 pt-2.5 sm:pt-0 sm:border-0">
+                    <span className="text-[10px] text-zinc-500 block uppercase tracking-wider font-mono text-[9px]">Remaining Balance</span>
+                    <span className="font-mono text-sm sm:text-xs font-extrabold text-white">
                       {currency} {debt.remainingAmount.toLocaleString()}
                     </span>
                   </div>
@@ -296,7 +296,7 @@ export default function DebtTracker({
 
                 {/* Repayment Action Controls */}
                 {!isFullyPaid && payingDebtId !== debt.id && increasingDebtId !== debt.id && (
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={() => {
                         setPayingDebtId(debt.id);
@@ -375,7 +375,7 @@ export default function DebtTracker({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="text-[10px] text-[#888888] font-bold block mb-1">Pay Amount ({currency})</label>
                         <input

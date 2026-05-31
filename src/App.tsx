@@ -1017,11 +1017,27 @@ export default function App() {
     reader.onload = (event) => {
       try {
         const loadedJson = JSON.parse(event.target?.result as string);
-        if (loadedJson.cashAccounts && loadedJson.cards && loadedJson.transactions) {
-          updateState(() => loadedJson);
-          showToast('success', 'Database restored successfully! Ledger tracks have re-balanced.');
+        
+        let stateToLoad: any = null;
+        let originalOwner = '';
+        
+        if (loadedJson.version === 'EM_BUDGET_SECURE_EX_V1' && loadedJson.data) {
+          stateToLoad = loadedJson.data;
+          originalOwner = loadedJson.exportedBy || '';
+        } else if (loadedJson.cashAccounts && loadedJson.cards && loadedJson.transactions) {
+          stateToLoad = loadedJson;
+        }
+
+        if (stateToLoad) {
+          updateState(() => stateToLoad);
+          
+          if (originalOwner && originalOwner !== 'Anonymous') {
+            showToast('success', `Personal ledger belonging to ${originalOwner} imported successfully! All records linked to your active identity.`);
+          } else {
+            showToast('success', 'Database restored successfully! Ledger tracks have re-balanced.');
+          }
         } else {
-          showToast('error', 'Invalid backup file. Requisites database elements were missing.');
+          showToast('error', 'Invalid backup file. Requisite database structures were missing.');
         }
       } catch (err) {
         showToast('error', 'File decode failure. Try with a valid export JSON backup.');
@@ -1032,9 +1048,10 @@ export default function App() {
 
   // 3. AGGREGATES & BALANCES COMPUTERS
   const totalCashAmount = state.cashAccounts.reduce((sum, c) => sum + c.balance, 0);
-  const totalCardsAmount = state.cards.filter(c => !c.isCanceled).reduce((sum, c) => sum + c.currentBalance, 0);
+  const totalDebitCardsAmount = state.cards.filter(c => !c.isCanceled && c.cardType === 'Debit').reduce((sum, c) => sum + c.currentBalance, 0);
+  const totalCreditCardsAmount = state.cards.filter(c => !c.isCanceled && c.cardType === 'Credit').reduce((sum, c) => sum + c.currentBalance, 0);
   const totalDebtsAmount = state.debts.reduce((sum, d) => sum + d.remainingAmount, 0);
-  const aggregateActiveWealth = totalCashAmount + totalCardsAmount - totalDebtsAmount;
+  const aggregateActiveWealth = totalCashAmount + totalDebitCardsAmount - totalCreditCardsAmount - totalDebtsAmount;
 
   const currentMonthInflow = state.transactions
     .filter(t => t.type === 'income' && t.date.includes('-05-')) // Filter to May
@@ -1045,15 +1062,24 @@ export default function App() {
     .reduce((sum, t) => sum + t.amount, 0);
 
   // 4. TRANSACTION FILTERING METHOD
-  const filteredHistory = state.transactions.filter(t => {
-    const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          t.category.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesType = filterType === 'all' || t.type === filterType;
-    const matchesAccount = filterAccount === 'all' || t.accountId === filterAccount;
+  const filteredHistory = [...state.transactions]
+    .filter(t => {
+      const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            t.category.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesType = filterType === 'all' || t.type === filterType;
+      const matchesAccount = filterAccount === 'all' || t.accountId === filterAccount;
 
-    return matchesSearch && matchesType && matchesAccount;
-  });
+      return matchesSearch && matchesType && matchesAccount;
+    })
+    .sort((a, b) => {
+      const dateCompare = b.date.localeCompare(a.date);
+      if (dateCompare !== 0) return dateCompare;
+      const aNum = parseInt(a.id.replace(/\D/g, ''), 10);
+      const bNum = parseInt(b.id.replace(/\D/g, ''), 10);
+      if (!isNaN(aNum) && !isNaN(bNum)) return bNum - aNum;
+      return b.id.localeCompare(a.id);
+    });
 
   // Render loading state while validating device identity
   if (isCheckingAuth) {
@@ -1078,12 +1104,17 @@ export default function App() {
       {/* 1. TOP HEADER BRAND RAIL */}
       <header className="px-6 py-4 bg-[#050505] border-b border-zinc-900 flex justify-between items-center z-20" id="header-brand-rail">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-white flex items-center justify-center rounded-xl shadow-lg shadow-white/5 shrink-0">
-            <div className="w-5 h-5 border-4 border-black rounded-full border-t-transparent animate-spin" style={{ animationDuration: '3s' }}></div>
-          </div>
+          <svg viewBox="0 0 100 100" className="w-9 h-9 shrink-0" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100" height="100" rx="22" fill="black" stroke="#27272a" strokeWidth="4px" />
+            <text x="50" y="63" fill="white" fontSize="42" fontWeight="900" fontFamily='"Inter", ui-sans-serif, system-ui, sans-serif' textAnchor="middle">
+              <tspan fill="#ffffff" fontWeight="bold" fontFamily="monospace">{"{"}</tspan>
+              <tspan fill="white" fontWeight="900" fontFamily="sans-serif">EM</tspan>
+              <tspan fill="#ffffff" fontWeight="bold" fontFamily="monospace">{"}"}</tspan>
+            </text>
+          </svg>
           <div>
             <h1 className="text-sm font-black tracking-tight text-white uppercase flex items-center gap-1.5 leading-none">
-              Finance Manager
+              EM Budget
             </h1>
             <p className="text-[9px] text-zinc-500 font-mono mt-1">Owner Device Secured</p>
           </div>
@@ -1168,7 +1199,7 @@ export default function App() {
       )}
 
       {/* 2. DUAL LAYOUT: MAIN VIEWPORT */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start relative pb-12">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start relative pb-28 lg:pb-12">
         
         {/* =================== COLUMN 1: ACCESS MODULES & ACTIVE OPERATIONS =================== */}
         <section className="col-span-1 lg:col-span-3 order-3 lg:order-1 space-y-6 w-full" id="desktop-control-column">
@@ -1279,14 +1310,18 @@ export default function App() {
                       </h2>
                     </div>
 
-                    <div className="flex items-center justify-between pt-4 border-t border-zinc-800/80 z-10">
+                    <div className="grid grid-cols-3 gap-2 pt-4 border-t border-zinc-800/80 z-10">
                       <div>
-                        <p className="text-[9px] text-zinc-500 uppercase tracking-wider mb-0.5">Physical Cash</p>
-                        <p className="text-emerald-400 text-xs font-mono font-bold">+{state.currency}{totalCashAmount.toLocaleString()}</p>
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-wider mb-0.5" title="Physical Cash + Debit Card Assets">Liquid Assets</p>
+                        <p className="text-emerald-400 text-xs font-mono font-bold">+{state.currency}{(totalCashAmount + totalDebitCardsAmount).toLocaleString()}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-wider mb-0.5" title="Owed Balance on Credit Cards">Card Owed</p>
+                        <p className="text-amber-500 text-xs font-mono font-bold">-{state.currency}{totalCreditCardsAmount.toLocaleString()}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-[9px] text-zinc-500 uppercase tracking-wider mb-0.5">Credit/Debit Assets</p>
-                        <p className="text-zinc-300 text-xs font-mono font-bold">{state.currency}{totalCardsAmount.toLocaleString()}</p>
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-wider mb-0.5" title="Owed Balance on Private/Institutional Loans">Loan Owed</p>
+                        <p className="text-red-400 text-xs font-mono font-bold">-{state.currency}{totalDebtsAmount.toLocaleString()}</p>
                       </div>
                     </div>
                   </div>
@@ -1357,7 +1392,17 @@ export default function App() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-semibold text-zinc-404 text-zinc-400 px-1">Recent Transactions</h4>
                     <div className="space-y-2">
-                      {state.transactions.slice(0, 4).map((t) => {
+                      {[...state.transactions]
+                        .sort((a, b) => {
+                          const dateCompare = b.date.localeCompare(a.date);
+                          if (dateCompare !== 0) return dateCompare;
+                          const aNum = parseInt(a.id.replace(/\D/g, ''), 10);
+                          const bNum = parseInt(b.id.replace(/\D/g, ''), 10);
+                          if (!isNaN(aNum) && !isNaN(bNum)) return bNum - aNum;
+                          return b.id.localeCompare(a.id);
+                        })
+                        .slice(0, 4)
+                        .map((t) => {
                         const isIncome = t.type === 'income' || t.type === 'deposit';
                         return (
                           <div 

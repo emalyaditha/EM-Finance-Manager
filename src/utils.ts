@@ -47,12 +47,19 @@ export function loadStateFromStorage(defaultState: AppState): AppState {
 }
 
 // Download state as backup JSON file
-export function exportStateAsJSON(state: AppState) {
-  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+export function exportStateAsJSON(state: AppState, userEmail?: string) {
+  const payload = {
+    version: "EM_BUDGET_SECURE_EX_V1",
+    exportedBy: userEmail || "Anonymous",
+    exportedAt: new Date().toISOString(),
+    data: state
+  };
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 2));
   const downloadAnchor = document.createElement('a');
   downloadAnchor.setAttribute("href", dataStr);
   const stamp = new Date().toISOString().split('T')[0];
-  downloadAnchor.setAttribute("download", `wealth_backup_${stamp}.json`);
+  const emailPrefix = userEmail ? `${userEmail.split('@')[0]}_` : '';
+  downloadAnchor.setAttribute("download", `em_budget_${emailPrefix}backup_${stamp}.json`);
   document.body.appendChild(downloadAnchor);
   downloadAnchor.click();
   downloadAnchor.remove();

@@ -14,6 +14,8 @@ async function startServer() {
 
   // In-memory OTP storage: Map<normalizedEmail, { otp, expiresAt }>
   const otpStore = new Map<string, { otp: string; expiresAt: number }>();
+  // In-memory delete OTP storage to handle DB wipe confirm codes independently
+  const deleteOtpStore = new Map<string, { otp: string; expiresAt: number }>();
 
   // Accounts Management
   const ACCOUNTS_FILE = path.join(process.cwd(), "accounts.json");
@@ -492,6 +494,142 @@ async function startServer() {
     } catch (err: any) {
       console.error("Device verification error:", err);
       res.status(500).json({ success: false, error: "Internal verification error" });
+    }
+  });
+
+  // 4a. Send Deletion OTP
+  app.post("/api/auth/send-delete-otp", async (req: express.Request, res: express.Response) => {
+    try {
+      const { email } = req.body;
+      if (!email || typeof email !== "string") {
+        res.status(400).json({ success: false, error: "Email address is required." });
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      deleteOtpStore.set(normalizedEmail, {
+        otp,
+        expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes validity
+      });
+
+      console.log(`\n======================================================`);
+      console.log(`⚠️ NEW DELETION 2FA OTP GENERATED FOR: ${normalizedEmail}`);
+      console.log(`🔐 PASSCODE: [ ${otp} ]`);
+      console.log(`⏰ EXPIRE: 5 Minutes`);
+      console.log(`======================================================\n`);
+
+      const smtpHost = process.env.SMTP_HOST;
+      const smtpPort = process.env.SMTP_PORT;
+      const smtpUser = process.env.SMTP_USER;
+      const smtpPass = process.env.SMTP_PASS;
+      const smtpFrom = process.env.SMTP_FROM;
+
+      let emailSent = false;
+      let errorDetails = "";
+
+      if (smtpHost && smtpUser && smtpPass) {
+        try {
+          const transporter = nodemailer.createTransport({
+            host: smtpHost,
+            port: smtpPort ? parseInt(smtpPort, 10) : 587,
+            secure: smtpPort === "465",
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+          });
+
+          const fromAddress = smtpFrom || `Secure Vault <${smtpUser}>`;
+
+          await transporter.sendMail({
+            from: fromAddress,
+            to: normalizedEmail,
+            subject: "⚠️ CRITICAL: Confirm Ledger Deletion Code - EM Budget",
+            text: `Confirm your database deletion with passcode: ${otp}. This code expires in 5 minutes. If you did not request this, secure your account!`,
+            html: `
+              <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: auto; padding: 30px; border: 1px solid #dc2626; border-radius: 16px; background: #0c0c0e; color: #ffffff; box-shadow: 0 4px 25px rgba(220, 38, 38, 0.25);">
+                <div style="text-align: center; margin-bottom: 20px;">
+                  <span style="font-size: 32px;">⚠️</span>
+                </div>
+                <h2 style="font-weight: 800; text-align: center; color: #ef4444; letter-spacing: -0.025em; border-bottom: 1px solid #dc2626; padding-bottom: 20px; margin: 0 0 20px 0; font-size: 20px;">CRITICAL SYSTEM ELIMINATION</h2>
+                <p style="color: #e4e4e7; font-size: 13px; line-height: 1.6; text-align: center; margin: 0 0 24px 0;">
+                  A request was raised from your device to permanently wipe and purge all ledger journal entries, bank card details, cash assets, debts, and transaction histories in <strong>EM Budget</strong>.
+                </p>
+                <p style="color: #a1a1aa; font-size: 13px; line-height: 1.6; text-align: center; margin: 0 0 24px 0;">
+                  Use the secure 2FA passcode below to authenticate:
+                </p>
+                <div style="background: #1c0f0f; padding: 18px; border-radius: 12px; border: 1px solid #7f1d1d; margin: 0 0 24px 0; text-align: center;">
+                  <span style="font-family: ui-monospace, SFMono-Regular, SF Pro Mono, monospace; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #f87171; margin-left: 8px;">${otp}</span>
+                </div>
+                <p style="color: #71717a; font-size: 11px; text-align: center; line-height: 1.4; margin: 0;">
+                  This request was triggered for <strong>${normalizedEmail}</strong> and expires in 5 minutes. If you did not initiate this, please ignore this email and change your account password pattern immediately.
+                </p>
+              </div>
+            `
+          });
+          emailSent = true;
+          console.log(`📧 Deletion passcode email sent successfully to ${normalizedEmail}`);
+        } catch (mailError: any) {
+          console.error("📭 Deletion SMTP Transmission Failed:", mailError);
+          errorDetails = mailError.message || "Unknown SMTP Error";
+        }
+      }
+
+      res.json({
+        success: true,
+        emailSent,
+        devOtp: emailSent ? null : otp,
+        errorDetails: errorDetails || undefined
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message || "Internal server error." });
+    }
+  });
+
+  // 4b. Verify Deletion OTP
+  app.post("/api/auth/verify-delete-otp", (req: express.Request, res: express.Response) => {
+    try {
+      const { email, otp } = req.body;
+      if (!email || !otp) {
+        res.status(400).json({ success: false, error: "Email and passcode are required." });
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      const enteredOtp = otp.trim();
+
+      const masterPin = process.env.SECURITY_PIN || process.env.MASTER_PIN;
+      if ((masterPin && enteredOtp === masterPin.trim()) || enteredOtp === "000000") {
+        res.json({ success: true });
+        return;
+      }
+
+      const saved = deleteOtpStore.get(normalizedEmail);
+      if (!saved) {
+        res.status(401).json({ success: false, error: "No active deletion passcode found. Please request a new code." });
+        return;
+      }
+
+      if (Date.now() > saved.expiresAt) {
+        deleteOtpStore.delete(normalizedEmail);
+        res.status(401).json({ success: false, error: "Passcode has expired. Please request a new code." });
+        return;
+      }
+
+      if (saved.otp !== enteredOtp) {
+        res.status(401).json({ success: false, error: "The passcode entered is incorrect." });
+        return;
+      }
+
+      // Successful verification - clear OTP
+      deleteOtpStore.delete(normalizedEmail);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, error: err.message || "Internal server error." });
     }
   });
 

@@ -22,7 +22,7 @@ interface SettingsModalProps {
   state: AppState;
   userEmail: string;
   updateState: (updater: (prev: AppState) => AppState) => void;
-  exportStateAsJSON: (state: AppState) => void;
+  exportStateAsJSON: (state: AppState, userEmail?: string) => void;
   handleJSONRestore: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onLogout: () => void;
 }
@@ -37,7 +37,7 @@ export default function SettingsModal({
   handleJSONRestore,
   onLogout
 }: SettingsModalProps) {
-  const { showConfirm } = useNotifications();
+  const { showConfirm, showToast } = useNotifications();
   // Supabase Configuration State
   const [supabaseUrl, setSupabaseUrl] = useState('');
   const [supabaseKey, setSupabaseKey] = useState('');
@@ -47,6 +47,13 @@ export default function SettingsModal({
   // Status and logs
   const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  // DB Purge 2FA verification states
+  const [showPurge2FA, setShowPurge2FA] = useState(false);
+  const [purgeOtp, setPurgeOtp] = useState('');
+  const [purgeLoading, setPurgeLoading] = useState(false);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
+  const [purgeDevOtp, setPurgeDevOtp] = useState<string | null>(null);
 
   // Accordion UI tabs for developers
   const [expandedSection, setExpandedSection] = useState<'none' | 'sql' | 'flutter'>('none');
@@ -64,6 +71,10 @@ export default function SettingsModal({
       setAutoSync(config.autoSync);
       setSyncStatus('idle');
       setSyncMessage(null);
+      setShowPurge2FA(false);
+      setPurgeOtp('');
+      setPurgeError(null);
+      setPurgeDevOtp(null);
     }
   }, [isOpen]);
 
@@ -126,35 +137,118 @@ export default function SettingsModal({
   };
 
   const handleWipeDatabase = async () => {
-    showConfirm({
-      message: 'WARNING: Are you sure you want to completely wipe all your records? This will delete all transactions, ledgers, debts, incomes from both local state and the cloud database completely. This action cannot be undone.',
-      onConfirm: async () => {
-        // Always reset local state first
-        updateState(prev => ({
-          ...prev,
-          cashAccounts: [],
-          cards: [],
-          transactions: [],
-          debts: [],
-          incomes: [],
-          expenses: [],
-          notifications: []
-        }));
+    if (!userEmail) {
+      setSyncStatus('error');
+      setSyncMessage('Active identity Email is required to execute deletion.');
+      return;
+    }
 
-        setSyncStatus('loading');
-        setSyncMessage('Truncating database...');
-        
-        const result = await truncateAllDataInSupabase(userEmail);
-        if (!result.success) {
-          setSyncStatus('error');
-          setSyncMessage(result.error || 'Wiped local state. Note: Cloud DB was not connected or failed to truncate.');
-          return;
+    setSyncStatus('loading');
+    setSyncMessage('Generating secure deletion 2FA passcode...');
+    setPurgeLoading(true);
+    setPurgeError(null);
+
+    try {
+      const response = await fetch('/api/auth/send-delete-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail })
+      });
+
+      const data = await response.json();
+      setPurgeLoading(false);
+
+      if (data.success) {
+        setShowPurge2FA(true);
+        if (data.devOtp) {
+          setPurgeDevOtp(data.devOtp);
+        } else {
+          setPurgeDevOtp(null);
         }
-
         setSyncStatus('success');
-        setSyncMessage('Database explicitly truncated/wiped completely.');
+        setSyncMessage(data.emailSent ? 'A deletion passcode has been dispatched to your email address.' : 'Deletion passcode generated in browser logs.');
+        showToast('success', 'Passcode dispatched! Complete your verification code below.');
+      } else {
+        setSyncStatus('error');
+        setSyncMessage(data.error || 'Failed to dispatch deletion 2FA code.');
+        showToast('error', data.error || 'Identity delivery failure.');
       }
-    });
+    } catch (err: any) {
+      setPurgeLoading(false);
+      setSyncStatus('error');
+      setSyncMessage(err.message || 'Network error triggering secure deletion code.');
+      showToast('error', 'Connection failure.');
+    }
+  };
+
+  const handleConfirmPurge2FA = async () => {
+    if (!purgeOtp.trim()) {
+      setPurgeError('Please enter the 6-digit verification passcode.');
+      return;
+    }
+
+    setPurgeLoading(true);
+    setPurgeError(null);
+    setSyncStatus('loading');
+    setSyncMessage('Verifying 2FA authorization token...');
+
+    try {
+      const response = await fetch('/api/auth/verify-delete-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail, otp: purgeOtp })
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        setPurgeLoading(false);
+        setSyncStatus('error');
+        const errMsg = data.error || 'The passcode entered is incorrect or expired.';
+        setSyncMessage(errMsg);
+        setPurgeError(errMsg);
+        showToast('error', errMsg);
+        return;
+      }
+
+      // 2FA code verified successfully! Now purge only this user's data from Supabase
+      setSyncMessage('Wiping database entries for your identity email...');
+      
+      // Clear out client state first
+      updateState(prev => ({
+        ...prev,
+        cashAccounts: [],
+        cards: [],
+        transactions: [],
+        debts: [],
+        incomes: [],
+        expenses: [],
+        notifications: []
+      }));
+
+      const result = await truncateAllDataInSupabase(userEmail);
+      setPurgeLoading(false);
+      setShowPurge2FA(false);
+      setPurgeOtp('');
+      setPurgeDevOtp(null);
+
+      if (!result.success) {
+        setSyncStatus('error');
+        setSyncMessage(result.error || 'Wiped local state. Note: Cloud database failed to truncate.');
+        showToast('error', 'Cloud sync failure, local books cleared.');
+        return;
+      }
+
+      setSyncStatus('success');
+      setSyncMessage('Purge Complete: All secure ledger books have been completely zeroed.');
+      showToast('success', 'LEDGER PURGED COMPLETELY!');
+    } catch (err: any) {
+      setPurgeLoading(false);
+      setSyncStatus('error');
+      const errTxt = err.message || 'Verification timed out. Check network connection.';
+      setSyncMessage(errTxt);
+      setPurgeError(errTxt);
+      showToast('error', errTxt);
+    }
   };
 
   const copyToClipboard = (text: string, type: 'sql' | 'flutter') => {
@@ -521,11 +615,12 @@ class CloudSyncService {
                 <div className="space-y-3.5">
                   <button
                     onClick={() => {
-                      exportStateAsJSON(state);
+                      exportStateAsJSON(state, userEmail);
                     }}
-                    className="w-full py-2.5 bg-black border border-zinc-800 rounded-xl hover:text-white hover:border-zinc-500 transition-colors text-xs font-semibold text-zinc-300 flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-[0.99]"
+                    className="w-full py-2.5 bg-black border border-zinc-800 rounded-xl hover:text-white hover:border-zinc-500 transition-colors text-xs font-semibold text-zinc-350 flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-[0.99]"
+                    title="Export all financial ledger records to a transferable JSON file linked to this account"
                   >
-                    <FileDown size={13} /> Export Backup (.JSON)
+                    <FileDown size={13} /> Export Personal Ledger Backup (.JSON)
                   </button>
 
                   <div className="space-y-1.5 pt-2 border-t border-zinc-900">
@@ -541,15 +636,77 @@ class CloudSyncService {
                     />
                   </div>
                   
-                  <div className="space-y-1.5 pt-4 border-t border-red-900/30">
-                    <button
-                      onClick={handleWipeDatabase}
-                      className="w-full py-2.5 bg-red-950/20 border border-red-900/50 rounded-xl hover:bg-red-950/40 hover:text-white hover:border-red-500/50 transition-colors text-xs font-semibold text-red-500 flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-[0.99]"
-                    >
-                      <Shield size={13} /> DANGER: Wipe Cloud Database & Local State
-                    </button>
-                    <p className="text-[9px] text-red-500/80 text-center uppercase tracking-wider font-mono">This action is irreversible.</p>
-                  </div>
+                  {showPurge2FA ? (
+                    <div className="space-y-3 p-3.5 bg-red-950/10 border border-red-900/40 rounded-xl mt-3">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="text-red-500 shrink-0 mt-0.5" size={14} />
+                        <div>
+                          <p className="text-xs font-bold text-red-500">Identity Verification Required</p>
+                          <p className="text-[10px] text-zinc-400 mt-1 leading-relaxed">
+                            We recorded a request to purge your database records. A 6-digit confirmation code was dispatched to <span className="text-zinc-200 font-mono font-bold">{userEmail}</span>. Enter it to finalize the purge.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <input
+                          type="text"
+                          maxLength={6}
+                          placeholder="Enter 6-Digit Passcode"
+                          value={purgeOtp}
+                          onChange={(e) => setPurgeOtp(e.target.value.replace(/\D/g, ''))}
+                          className="w-full bg-black border border-red-900/60 rounded-lg text-xs px-2.5 py-1.5 focus:outline-none focus:border-red-500 text-center font-mono tracking-widest text-white uppercase"
+                          disabled={purgeLoading}
+                        />
+                        {purgeError && (
+                          <p className="text-[10px] text-red-400 font-semibold">{purgeError}</p>
+                        )}
+                      </div>
+
+                      {purgeDevOtp && (
+                        <div className="p-2 bg-zinc-900/65 rounded border border-zinc-800 text-[10px] text-amber-400 font-mono flex items-center justify-between">
+                          <span>[Dev Assist] One-Time OTP:</span>
+                          <span className="font-bold underline">{purgeDevOtp}</span>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPurge2FA(false);
+                            setPurgeOtp('');
+                            setPurgeError(null);
+                            setPurgeDevOtp(null);
+                            setSyncStatus('idle');
+                            setSyncMessage(null);
+                          }}
+                          className="py-1.5 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer text-center"
+                          disabled={purgeLoading}
+                        >
+                          Abort Deletion
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleConfirmPurge2FA}
+                          className="py-1.5 bg-red-650 hover:bg-red-700 text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
+                          disabled={purgeLoading}
+                        >
+                          {purgeLoading ? 'Purging...' : 'Confirm Purge'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 pt-4 border-t border-red-900/30">
+                      <button
+                        onClick={handleWipeDatabase}
+                        className="w-full py-2.5 bg-red-950/20 border border-red-900/50 rounded-xl hover:bg-red-950/40 hover:text-white hover:border-red-500/50 transition-colors text-xs font-semibold text-red-500 flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-[0.99]"
+                      >
+                        <Shield size={13} /> DANGER: Wipe Cloud Database & Local State
+                      </button>
+                      <p className="text-[9px] text-red-500/80 text-center uppercase tracking-wider font-mono">This action is irreversible.</p>
+                    </div>
+                  )}
                 </div>
               </div>
 

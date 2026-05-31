@@ -145,6 +145,10 @@ export default function SubscriptionManagement({
 
   const selectedSubscription = subscriptions.find(s => s.id === selectedSubId);
 
+  const sortedSubscriptions = [...subscriptions].sort((a, b) => {
+    return a.dueDate.localeCompare(b.dueDate) || a.name.localeCompare(b.name);
+  });
+
   return (
     <div className="space-y-6" id="subscription-management-section">
       
@@ -186,7 +190,7 @@ export default function SubscriptionManagement({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-zinc-400 font-mono font-bold uppercase block mb-1">Billing Sum ({currency})</label>
               <input
@@ -212,7 +216,7 @@ export default function SubscriptionManagement({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-zinc-400 font-mono font-bold uppercase block mb-1">Next Payment Due</label>
               <input
@@ -280,7 +284,7 @@ export default function SubscriptionManagement({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-zinc-400 font-mono font-bold uppercase block mb-1">Deduct Funds From</label>
               <select
@@ -333,7 +337,7 @@ export default function SubscriptionManagement({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4" id="subscriptions-grid">
-          {subscriptions.map(sub => {
+          {sortedSubscriptions.map(sub => {
             const statusStyle = getDueStatus(sub.dueDate, sub.status);
             return (
               <div 
