@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Transaction, CashAccount, BankCard } from '../types';
 import { X, Save, Trash2 } from 'lucide-react';
+import { useNotifications } from '../context/NotificationContext';
 
 interface TransactionEditModalProps {
   transaction: Transaction | null;
@@ -21,6 +22,7 @@ export default function TransactionEditModal({
   onDelete,
   currency
 }: TransactionEditModalProps) {
+  const { showToast } = useNotifications();
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState<number | ''>('');
   const [date, setDate] = useState('');
@@ -28,6 +30,7 @@ export default function TransactionEditModal({
   const [accountId, setAccountId] = useState('');
   const [accountType, setAccountType] = useState<'cash' | 'card'>('cash');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Validation States
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -99,14 +102,35 @@ export default function TransactionEditModal({
       }
       return;
     }
-    onSave(transaction.id, {
-      title: title.trim(),
-      amount: Number(amount),
-      date,
-      category,
-      accountId,
-      accountType
-    });
+    setIsProcessing(true);
+    try {
+      onSave(transaction.id, {
+        title: title.trim(),
+        amount: Number(amount),
+        date,
+        category,
+        accountId,
+        accountType
+      });
+      showToast('success', 'Transaction updated successfully!');
+      onClose();
+    } catch (e) {
+      showToast('error', 'Failed to update transaction.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDelete = () => {
+    setIsProcessing(true);
+    try {
+      onDelete(transaction.id);
+      showToast('info', 'Transaction deleted.');
+      onClose();
+    } catch (e) {
+      showToast('error', 'Failed to delete transaction.');
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -230,16 +254,18 @@ export default function TransactionEditModal({
                 <button
                   type="button"
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                  disabled={isProcessing}
+                  className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(transaction.id); }}
-                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl transition-colors shadow-lg shadow-red-500/20 cursor-pointer"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(); }}
+                  disabled={isProcessing}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl transition-colors shadow-lg shadow-red-500/20 cursor-pointer disabled:opacity-50"
                 >
-                  Confirm
+                  {isProcessing ? 'Deleting...' : 'Confirm'}
                 </button>
               </div>
             ) : (
@@ -253,9 +279,10 @@ export default function TransactionEditModal({
             )}
             <button
               type="submit"
-              className="flex-1 py-2.5 bg-white text-black font-bold text-xs rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xl shadow-white/10"
+              disabled={isProcessing}
+              className="flex-1 py-2.5 bg-white text-black font-bold text-xs rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xl shadow-white/10 disabled:opacity-50"
             >
-              <Save size={14} /> Save Changes
+              {isProcessing ? 'Saving...' : <><Save size={14} /> Save Changes</>}
             </button>
           </div>
         </form>

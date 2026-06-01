@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Mail, ShieldCheck, KeyRound, AlertCircle, RefreshCw, Clipboard, Check, Lock, ArrowRight, Sparkles, Key } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getSupabaseConfig } from '../supabase';
+import { useNotifications } from '../context/NotificationContext';
 
 interface EmailLoginProps {
   onUnlocked: (email: string, rememberMe: boolean) => void;
@@ -10,6 +11,7 @@ interface EmailLoginProps {
 type AuthStep = 'enter-email' | 'login-password' | 'verify-otp' | 'create-password' | 'reset-otp' | 'reset-password';
 
 export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
+  const { showToast } = useNotifications();
   const [step, setStep] = useState<AuthStep>('enter-email');
   
   const [email, setEmail] = useState('');
@@ -19,8 +21,6 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
   const [otpValue, setOtpValue] = useState('');
   
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [infoMsg, setInfoMsg] = useState<string | null>(null);
   
   const [sandboxOtp, setSandboxOtp] = useState<string | null>(null);
 

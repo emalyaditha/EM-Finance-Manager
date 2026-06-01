@@ -46,15 +46,15 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
       {children}
       
       {/* Toast Manager */}
-      <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2">
+      <div className="fixed top-4 left-4 right-4 md:left-auto md:right-4 z-[9999] flex flex-col gap-2 items-center md:items-end">
         <AnimatePresence>
           {toasts.map((toast) => (
             <motion.div
               key={toast.id}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              className={`p-4 rounded-xl shadow-lg border flex items-center gap-3 backdrop-blur-sm min-w-[300px]
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className={`p-4 rounded-xl shadow-lg border flex items-center gap-3 backdrop-blur-sm w-full max-w-[300px]
                 ${toast.type === 'success' ? 'bg-emerald-900/80 border-emerald-500 text-emerald-100' : 
                   toast.type === 'error' ? 'bg-red-900/80 border-red-500 text-red-100' :
                   toast.type === 'warning' ? 'bg-amber-900/80 border-amber-500 text-amber-100' :

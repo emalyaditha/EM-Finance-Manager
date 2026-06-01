@@ -41,6 +41,7 @@ export default function InflowsOutflows({
 
   // Balance Insufficiency state
   const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Advanced validation structures
   const [incErrors, setIncErrors] = useState<Record<string, string>>({});
@@ -152,7 +153,7 @@ export default function InflowsOutflows({
     return Object.keys(errs).length === 0;
   };
 
-  const handleIncomeSubmit = (e: React.FormEvent) => {
+  const handleIncomeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIncSubmitted(true);
     const targetComp = incTargetId ? `${incTargetId}:${incTargetType}` : '';
@@ -169,20 +170,27 @@ export default function InflowsOutflows({
       return;
     }
 
-    onAddIncome(parseFloat(incAmount), incDate, incSource || 'Anonymous Inflow', incCategory, incTargetId, incTargetType);
-    setIncAmount('');
-    setIncSource('');
-    setIncCategory('Salary');
-    setIncSubmitted(false);
-    setIncErrors({});
-    showToast('success', 'Income received and ledger balanced successfully!');
+    setIsProcessing(true);
+    try {
+      await onAddIncome(parseFloat(incAmount), incDate, incSource || 'Anonymous Inflow', incCategory, incTargetId, incTargetType);
+      
+      setIncAmount('');
+      setIncSource('');
+      setIncCategory('Salary');
+      setIncSubmitted(false);
+      setIncErrors({});
+      showToast('success', 'Income received and ledger balanced successfully!');
+    } catch(e) {
+      showToast('error', 'Failed to add income.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handleExpenseSubmit = (e: React.FormEvent) => {
+  const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setExpSubmitted(true);
     setInsufficiencyError(null);
-    const methodComp = expMethodId ? `${expMethodId}:${expMethodType}` : '';
     const isValid = validateExpense(expTitle, expDesc, expAmount, expMethodId, expMethodType, true);
     if (!isValid) {
       if (!expTitle.trim()) {
@@ -196,22 +204,29 @@ export default function InflowsOutflows({
       return;
     }
 
-    onAddExpense(
-      expTitle || 'Instant Invoice',
-      expDesc || 'Uncategorized charge log',
-      parseFloat(expAmount),
-      expDate,
-      expCategory,
-      expMethodId,
-      expMethodType
-    );
+    setIsProcessing(true);
+    try {
+      await onAddExpense(
+        expTitle || 'Instant Invoice',
+        expDesc || 'Uncategorized charge log',
+        parseFloat(expAmount),
+        expDate,
+        expCategory,
+        expMethodId,
+        expMethodType
+      );
 
-    setExpAmount('');
-    setExpTitle('');
-    setExpDesc('');
-    setExpSubmitted(false);
-    setExpErrors({});
-    showToast('success', 'Invoice payment settled automatically! Account balance reduced.');
+      setExpAmount('');
+      setExpTitle('');
+      setExpDesc('');
+      setExpSubmitted(false);
+      setExpErrors({});
+      showToast('success', 'Invoice payment settled automatically! Account balance reduced.');
+    } catch(e) {
+      showToast('error', 'Failed to add expense.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleSelectTargetAccount = (value: string) => {
@@ -378,10 +393,10 @@ export default function InflowsOutflows({
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
+              disabled={isProcessing}
+              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg disabled:opacity-50"
             >
-              <PlusCircle size={14} className="text-emerald-600" />
-              Collect and Increment Balance
+              {isProcessing ? 'Processing...' : <><PlusCircle size={14} className="text-emerald-600" /> Collect and Increment Balance</>}
             </button>
           </form>
         ) : (
@@ -526,10 +541,10 @@ export default function InflowsOutflows({
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
+              disabled={isProcessing}
+              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg disabled:opacity-50"
             >
-              <MinusCircle size={14} className="text-rose-600" />
-              Settle Invoice & Deduct
+              {isProcessing ? 'Processing...' : <><MinusCircle size={14} className="text-rose-600" /> Settle Invoice & Deduct</>}
             </button>
           </form>
         )}
