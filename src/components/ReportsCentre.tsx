@@ -20,7 +20,7 @@ export default function ReportsCentre({
   currency,
 }: ReportsCentreProps) {
   const [reportType, setReportType] = useState<'monthly' | 'yearly' | 'category' | 'debt'>('monthly');
-  const [selectedMonth, setSelectedMonth] = useState('05'); // May by default
+  const [selectedMonth, setSelectedMonth] = useState(String(new Date().getMonth() + 1).padStart(2, '0'));
   const [selectedYear, setSelectedYear] = useState('2026');
 
   // Filter systems

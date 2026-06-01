@@ -1047,6 +1047,10 @@ export default function App() {
   };
 
   // 3. AGGREGATES & BALANCES COMPUTERS
+  const now = new Date();
+  const currentMonthLabel = now.toLocaleString('default', { month: 'long' });
+  const currentMonthFormat = `-${String(now.getMonth() + 1).padStart(2, '0')}-`;
+
   const totalCashAmount = state.cashAccounts.reduce((sum, c) => sum + c.balance, 0);
   const totalDebitCardsAmount = state.cards.filter(c => !c.isCanceled && c.cardType === 'Debit').reduce((sum, c) => sum + c.currentBalance, 0);
   const totalCreditCardsAmount = state.cards.filter(c => !c.isCanceled && c.cardType === 'Credit').reduce((sum, c) => sum + c.currentBalance, 0);
@@ -1054,11 +1058,11 @@ export default function App() {
   const aggregateActiveWealth = totalCashAmount + totalDebitCardsAmount - totalCreditCardsAmount - totalDebtsAmount;
 
   const currentMonthInflow = state.transactions
-    .filter(t => t.type === 'income' && t.date.includes('-05-')) // Filter to May
+    .filter(t => t.type === 'income' && t.date.includes(currentMonthFormat))
     .reduce((sum, t) => sum + t.amount, 0);
 
   const currentMonthOutflow = state.transactions
-    .filter(t => t.type === 'expense' && t.date.includes('-05-'))
+    .filter(t => t.type === 'expense' && t.date.includes(currentMonthFormat))
     .reduce((sum, t) => sum + t.amount, 0);
 
   // 4. TRANSACTION FILTERING METHOD
@@ -1354,7 +1358,7 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-3" id="cash-flow-overview">
                     <div className="bg-zinc-900/40 border border-zinc-850 p-4 rounded-[20px] flex items-center justify-between shadow-sm">
                       <div className="min-w-0">
-                        <span className="text-[9px] text-[#888888] font-bold uppercase block font-mono">May Received</span>
+                        <span className="text-[9px] text-[#888888] font-bold uppercase block font-mono">{currentMonthLabel} Received</span>
                         <span className="text-xs font-bold text-emerald-400 font-mono">+{state.currency}{currentMonthInflow.toLocaleString()}</span>
                       </div>
                       <div className="p-2 bg-emerald-950/20 text-emerald-400 rounded-lg">
@@ -1364,7 +1368,7 @@ export default function App() {
 
                     <div className="bg-zinc-900/40 border border-zinc-850 p-4 rounded-[20px] flex items-center justify-between shadow-sm">
                       <div className="min-w-0">
-                        <span className="text-[9px] text-[#888888] font-bold uppercase block font-mono">May Paid</span>
+                        <span className="text-[9px] text-[#888888] font-bold uppercase block font-mono">{currentMonthLabel} Paid</span>
                         <span className="text-xs font-bold text-rose-400 font-mono">-{state.currency}{currentMonthOutflow.toLocaleString()}</span>
                       </div>
                       <div className="p-2 bg-rose-950/20 text-rose-400 rounded-lg">
@@ -1728,8 +1732,7 @@ export default function App() {
           <span>Local database mirror synchronized fully.</span>
         </div>
         <div className="flex gap-4">
-          <span>Client Ref: c5675a6a</span>
-          <span>Google AI Studio Build</span>
+          <span>© 2026 — Designed & Developed by <a href="https://emalyaditha.com/" target="_blank" rel="noopener noreferrer" className="text-zinc-300 hover:text-white transition-colors underline">Emal Yaditha</a>. All rights reserved.</span>
         </div>
       </footer>
 
