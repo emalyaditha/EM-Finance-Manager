@@ -40,6 +40,14 @@ export default function SubscriptionManagement({
   const [payAccountType, setPayAccountType] = useState<'cash' | 'card'>('cash');
   const [payDate, setPayDate] = useState(() => new Date().toISOString().split('T')[0]);
 
+  // Validation structures
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitted, setSubmitted] = useState(false);
+
+  // Autofocus input refs
+  const nameInputRef = React.useRef<HTMLInputElement>(null);
+  const amountInputRef = React.useRef<HTMLInputElement>(null);
+
   // Initial account setup for payment choice
   React.useEffect(() => {
     if (cashAccounts.length > 0 && !payAccountId) {
@@ -51,21 +59,50 @@ export default function SubscriptionManagement({
     }
   }, [cashAccounts, cards, payAccountId]);
 
+  const validateForm = (name: string, amtStr: string, sub: boolean) => {
+    const errs: Record<string, string> = {};
+    if (sub || name) {
+      if (!name.trim()) {
+        errs.name = 'Service name is required';
+      } else if (name.trim().length < 3) {
+        errs.name = 'Service name must be at least 3 characters';
+      } else if (/[<>{}]/.test(name)) {
+        errs.name = 'Special characters are not allowed';
+      }
+    }
+    if (sub || amtStr) {
+      if (!amtStr) {
+        errs.amount = 'Billing sum is required';
+      } else {
+        const num = parseFloat(amtStr);
+        if (isNaN(num)) {
+          errs.amount = 'Must be a valid number';
+        } else if (num <= 0) {
+          errs.amount = 'Billing sum must be positive';
+        }
+      }
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    const amt = parseFloat(subAmount);
-    if (!subName.trim()) {
-      showToast('error', 'Please enter a valid subscription name');
-      return;
-    }
-    if (isNaN(amt) || amt <= 0) {
-      showToast('error', 'Please enter a positive amount');
+    setSubmitted(true);
+    const isValid = validateForm(subName, subAmount, true);
+    if (!isValid) {
+      if (!subName.trim()) {
+        nameInputRef.current?.focus();
+      } else {
+        amountInputRef.current?.focus();
+      }
+      showToast('error', 'Please resolve highlighted details errors.');
       return;
     }
 
     onAddSubscription({
       name: subName.trim(),
-      amount: amt,
+      amount: parseFloat(subAmount),
       billingCycle,
       dueDate,
       category,
@@ -76,6 +113,8 @@ export default function SubscriptionManagement({
     setSubAmount('');
     setDueDate(new Date().toISOString().split('T')[0]);
     setIsAdding(false);
+    setSubmitted(false);
+    setErrors({});
     showToast('success', 'Subscription plan registered successfully!');
   };
 
@@ -181,34 +220,58 @@ export default function SubscriptionManagement({
           <div>
             <label className="text-[10px] text-zinc-400 font-mono font-bold uppercase block mb-1">Service name</label>
             <input
+              ref={nameInputRef}
               type="text"
               placeholder="e.g. Netflix, Amazon Prime, AWS Server, Gym"
               value={subName}
-              onChange={(e) => setSubName(e.target.value)}
-              required
-              className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500"
+              onChange={(e) => {
+                setSubName(e.target.value);
+                validateForm(e.target.value, subAmount, submitted);
+              }}
+              className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none transition-colors ${
+                errors.name
+                  ? 'border-rose-500 focus:border-rose-600'
+                  : subName && !errors.name
+                  ? 'border-emerald-500 focus:border-emerald-600'
+                  : 'border-zinc-800'
+              }`}
             />
+            {errors.name && (
+              <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.name}</span>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-[10px] text-zinc-400 font-mono font-bold uppercase block mb-1">Billing Sum ({currency})</label>
               <input
+                ref={amountInputRef}
                 type="number"
                 step="0.01"
                 placeholder="0.00"
                 value={subAmount}
-                onChange={(e) => setSubAmount(e.target.value)}
-                required
-                className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono font-bold"
+                onChange={(e) => {
+                  setSubAmount(e.target.value);
+                  validateForm(subName, e.target.value, submitted);
+                }}
+                className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none font-mono font-bold transition-colors ${
+                  errors.amount
+                    ? 'border-rose-500 focus:border-rose-600'
+                    : subAmount && !errors.amount
+                    ? 'border-emerald-500 focus:border-emerald-600'
+                    : 'border-zinc-800'
+                }`}
               />
+              {errors.amount && (
+                <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.amount}</span>
+              )}
             </div>
             <div>
               <label className="text-[10px] text-zinc-400 font-mono font-bold uppercase block mb-1">Billing Interval</label>
               <select
                 value={billingCycle}
                 onChange={(e) => setBillingCycle(e.target.value as 'Monthly' | 'Yearly')}
-                className="w-full bg-[#050505] border border-zinc-800 text-zinc-300 text-xs rounded-xl px-2.5 py-2.5 focus:outline-none focus:border-zinc-500 font-medium"
+                className="w-full bg-[#050505] border border-zinc-800 text-zinc-300 text-xs rounded-xl px-2.5 py-3 focus:outline-none focus:border-zinc-500 font-medium"
               >
                 <option value="Monthly">Monthly Cycle</option>
                 <option value="Yearly">Yearly Cycle</option>
@@ -216,7 +279,7 @@ export default function SubscriptionManagement({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-[10px] text-zinc-400 font-mono font-bold uppercase block mb-1">Next Payment Due</label>
               <input
@@ -224,7 +287,7 @@ export default function SubscriptionManagement({
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
                 required
-                className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono"
+                className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-3 focus:outline-none focus:border-zinc-500 font-mono"
               />
             </div>
             <div>
@@ -232,7 +295,7 @@ export default function SubscriptionManagement({
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as CategoryExpense)}
-                className="w-full bg-[#050505] border border-zinc-800 text-zinc-300 text-xs rounded-xl px-2.5 py-2.5 focus:outline-none focus:border-zinc-500"
+                className="w-full bg-[#050505] border border-zinc-800 text-zinc-300 text-xs rounded-xl px-2.5 py-3 focus:outline-none focus:border-zinc-500"
               >
                 <option value="Entertainment">Entertainment</option>
                 <option value="Utilities">Utilities</option>
@@ -249,7 +312,7 @@ export default function SubscriptionManagement({
 
           <button
             type="submit"
-            className="w-full py-3 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
+            className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
           >
             <Plus size={14} className="text-emerald-600" />
             Establish Subscription

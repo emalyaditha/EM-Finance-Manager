@@ -1235,10 +1235,34 @@ export default function App() {
               ))}
             </nav>
           </div>
+
+          {/* Secure Environment Security Vault Identity Card (Visible on Desktop, hidden on Mobile) */}
+          <div className="bg-zinc-900/50 border border-zinc-850 p-6 rounded-[24px] space-y-4 shadow-xl hidden lg:block animate-fade-in">
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+              Identity Security Vault
+            </h3>
+            <div className="space-y-3">
+              <div className="p-3 bg-[#050505] border border-zinc-800 rounded-xl space-y-1">
+                <span className="text-[9px] text-[#8aa8bb] block uppercase font-mono font-bold">Secured Connection</span>
+                <span className="text-xs font-mono font-bold text-zinc-300 break-all">{userEmail || 'Client Local Only'}</span>
+              </div>
+              <div className="flex justify-between items-center text-[10px] text-zinc-400 font-mono border-t border-zinc-850/60 pt-3">
+                <span>Identity Session</span>
+                <span className="text-emerald-450 text-emerald-400 font-bold uppercase">Active</span>
+              </div>
+              <div className="flex justify-between items-center text-[10px] text-zinc-400 font-mono">
+                <span>Synchronicity</span>
+                <span className={realtimeSyncStatus === 'synced' ? 'text-emerald-400 font-bold uppercase' : 'text-amber-400 font-bold uppercase'}>
+                  {realtimeSyncStatus ? realtimeSyncStatus.toUpperCase() : 'IDLE'}
+                </span>
+              </div>
+            </div>
+          </div>
         </section>
 
         {/* =================== COLUMN 2: FINANCIAL WEB CONTENT (WIDESCREEN EXPANSION) =================== */}
-        <section className="col-span-1 lg:col-span-6 order-1 lg:order-2 space-y-6 w-full animate-fade-in" id="central-web-canvas">
+        <section className="col-span-1 lg:col-span-9 xl:col-span-6 order-1 lg:order-2 space-y-6 w-full animate-fade-in" id="central-web-canvas">
           
           {/* Header block for current active tab */}
           <div className="flex justify-between items-center bg-zinc-900/50 border border-zinc-850 p-6 rounded-[28px] shadow-xl">
@@ -1462,8 +1486,8 @@ export default function App() {
 
               {/* =================== CASE: TAB: INFLOWS_OUTFLOWS =================== */}
               {activeTab === 'inflow_outflow' && (
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
-                  <div className="md:col-span-5 w-full">
+                <div className="grid grid-cols-1 lg:grid-cols-12 xl:grid-cols-1 gap-6 items-start">
+                  <div className="col-span-1 lg:col-span-5 xl:col-span-12 w-full">
                     <InflowsOutflows
                       cashAccounts={state.cashAccounts}
                       cards={state.cards}
@@ -1472,7 +1496,7 @@ export default function App() {
                       currency={state.currency}
                     />
                   </div>
-                  <div className="md:col-span-7 w-full">
+                  <div className="col-span-1 lg:col-span-7 xl:col-span-12 w-full">
                     <SubscriptionManagement
                       subscriptions={state.subscriptions || []}
                       cashAccounts={state.cashAccounts}
@@ -1578,7 +1602,7 @@ export default function App() {
         </section>
 
         {/* =================== COLUMN 3: UNIFIED HISTORY SEARCH & AUDIT LOGS =================== */}
-        <section className="col-span-1 lg:col-span-3 order-2 lg:order-3 bg-zinc-900/50 border border-zinc-850 p-6 rounded-[24px] space-y-5 shadow-xl w-full" id="unified-audits-column">
+        <section className="col-span-1 lg:col-span-12 xl:col-span-3 order-2 lg:order-3 bg-zinc-900/50 border border-zinc-850 p-6 rounded-[24px] space-y-5 shadow-xl w-full" id="unified-audits-column">
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Searchable History</h3>

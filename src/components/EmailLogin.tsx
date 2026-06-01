@@ -47,10 +47,33 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
     };
   };
 
+  const validatePasswordStrength = (pass: string): string | null => {
+    if (pass.length < 8) {
+      return 'Password must be at least 8 characters long.';
+    }
+    if (!/[A-Z]/.test(pass)) {
+      return 'Password must contain at least one uppercase letter (A-Z).';
+    }
+    if (!/[a-z]/.test(pass)) {
+      return 'Password must contain at least one lowercase letter (a-z).';
+    }
+    if (!/[0-9]/.test(pass) && !/[!@#$%^&*(),.?":{}|<>]/.test(pass)) {
+      return 'Password must contain at least one number or special character.';
+    }
+    return null;
+  };
+
   const handleCheckEmail = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !email.trim()) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
       setErrorMsg('Please enter a valid email address.'); return;
+    }
+    // Strict regular expression email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setErrorMsg('Invalid email format. Match guidelines (e.g. user@domain.com).');
+      return;
     }
     setLoading(true); setErrorMsg(null); setInfoMsg(null); setSandboxOtp(null);
 
@@ -58,7 +81,7 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
       const resp = await fetch('/api/auth/check-email', {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ email: email.trim() }),
+        body: JSON.stringify({ email: cleanEmail }),
       });
       const data = await resp.json();
       if (!resp.ok || !data.success) throw new Error(data.error || 'Failed to check account');
@@ -77,10 +100,11 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
   };
 
   const initOtpSend = async () => {
+    const cleanEmail = email.trim();
     const resp = await fetch('/api/auth/send-otp', {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ email: email.trim() }),
+      body: JSON.stringify({ email: cleanEmail }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Failed to dispatch verification code.');
@@ -108,8 +132,9 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
 
   const handleVerifyOtp = async (e: React.FormEvent, isReset: boolean) => {
     e.preventDefault();
-    if (otpValue.trim().length !== 6) {
-      setErrorMsg('Please input a complete 6-digit confirmation code.'); return;
+    const cleanOtp = otpValue.trim();
+    if (cleanOtp.length !== 6 || !/^\d+$/.test(cleanOtp)) {
+      setErrorMsg('Please input a complete 6-digit numeric confirmation code.'); return;
     }
 
     setLoading(true); setErrorMsg(null);
@@ -119,7 +144,7 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
         headers: getHeaders(),
         body: JSON.stringify({
           email: email.trim(),
-          otp: otpValue.trim(),
+          otp: cleanOtp,
           forRegistrationOrReset: true
         }),
       });
@@ -136,7 +161,7 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password) { setErrorMsg('Enter a password.'); return; }
+    if (!password) { setErrorMsg('Enter your lock password.'); return; }
     
     setLoading(true); setErrorMsg(null);
     try {
@@ -158,8 +183,17 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
 
   const handleCreateOrResetPassword = async (e: React.FormEvent, isReset: boolean) => {
     e.preventDefault();
-    if (!password || password.length < 6) { setErrorMsg('Password must be at least 6 characters.'); return; }
-    if (password !== confirmPassword) { setErrorMsg('Passwords do not match.'); return; }
+    
+    // Entropy check
+    const strengthErrorMsg = validatePasswordStrength(password);
+    if (strengthErrorMsg) {
+      setErrorMsg(strengthErrorMsg);
+      return;
+    }
+    
+    if (password !== confirmPassword) {
+      setErrorMsg('Master keys do not match. Review passwords entries.'); return;
+    }
 
     setLoading(true); setErrorMsg(null);
     try {

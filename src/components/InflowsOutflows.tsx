@@ -42,6 +42,21 @@ export default function InflowsOutflows({
   // Balance Insufficiency state
   const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
 
+  // Advanced validation structures
+  const [incErrors, setIncErrors] = useState<Record<string, string>>({});
+  const [incSubmitted, setIncSubmitted] = useState(false);
+  const [expErrors, setExpErrors] = useState<Record<string, string>>({});
+  const [expSubmitted, setExpSubmitted] = useState(false);
+
+  // Focus Refs
+  const incSourceRef = React.useRef<HTMLInputElement>(null);
+  const incAmountRef = React.useRef<HTMLInputElement>(null);
+  const incTargetRef = React.useRef<HTMLSelectElement>(null);
+
+  const expTitleRef = React.useRef<HTMLInputElement>(null);
+  const expAmountRef = React.useRef<HTMLInputElement>(null);
+  const expTargetRef = React.useRef<HTMLSelectElement>(null);
+
   // Auto-populate first target/method on component load
   React.useEffect(() => {
     if (cashAccounts.length > 0 && !incTargetId) {
@@ -61,59 +76,130 @@ export default function InflowsOutflows({
     }
   }, [cashAccounts, cards, incTargetId, expMethodId]);
 
+  const validateIncome = (source: string, amtStr: string, target: string, sub: boolean) => {
+    const errs: Record<string, string> = {};
+    if (sub || source) {
+      if (!source.trim()) {
+        errs.source = 'Receipt source title is required';
+      } else if (source.trim().length < 3) {
+        errs.source = 'Source must be at least 3 characters';
+      } else if (/[<>{}]/.test(source)) {
+        errs.source = 'Special characters are not allowed';
+      }
+    }
+    if (sub || amtStr) {
+      if (!amtStr) {
+        errs.amount = 'Received sum is required';
+      } else {
+        const num = parseFloat(amtStr);
+        if (isNaN(num)) {
+          errs.amount = 'Received sum must be a number';
+        } else if (num <= 0) {
+          errs.amount = 'Received sum must be positive';
+        }
+      }
+    }
+    if (sub || target) {
+      if (!target) {
+        errs.target = 'Receipt target account is required';
+      }
+    }
+    setIncErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const validateExpense = (title: string, desc: string, amtStr: string, methodId: string, methodType: 'cash' | 'card', sub: boolean) => {
+    const errs: Record<string, string> = {};
+    if (sub || title) {
+      if (!title.trim()) {
+        errs.title = 'Expense Title is required';
+      } else if (title.trim().length < 3) {
+        errs.title = 'Title must be at least 3 characters';
+      } else if (/[<>{}]/.test(title)) {
+        errs.title = 'Special characters are not allowed';
+      }
+    }
+    if (sub || amtStr) {
+      if (!amtStr) {
+        errs.amount = 'Settled sum is required';
+      } else {
+        const num = parseFloat(amtStr);
+        if (isNaN(num)) {
+          errs.amount = 'Settled sum must be a valid number';
+        } else if (num <= 0) {
+          errs.amount = 'Settled sum must be positive';
+        } else if (methodId) {
+          let availableBalance = 0;
+          if (methodType === 'cash') {
+            const match = cashAccounts.find(c => c.id === methodId);
+            availableBalance = match ? match.balance : 0;
+          } else {
+            const match = cards.find(c => c.id === methodId);
+            availableBalance = match ? match.currentBalance : 0;
+          }
+          if (availableBalance < num) {
+            errs.amount = `Insufficient balance! Available: ${currency} ${availableBalance.toLocaleString()}`;
+          }
+        }
+      }
+    }
+    if (sub || methodId) {
+      if (!methodId) {
+        errs.methodId = 'Payment source account is required';
+      }
+    }
+    setExpErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleIncomeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const amountNum = parseFloat(incAmount) || 0;
-    if (amountNum <= 0) {
-      showToast('error', 'Amount must be positive');
+    setIncSubmitted(true);
+    const targetComp = incTargetId ? `${incTargetId}:${incTargetType}` : '';
+    const isValid = validateIncome(incSource, incAmount, targetComp, true);
+    if (!isValid) {
+      if (!incSource.trim()) {
+        incSourceRef.current?.focus();
+      } else if (!incAmount || parseFloat(incAmount) <= 0) {
+        incAmountRef.current?.focus();
+      } else {
+        incTargetRef.current?.focus();
+      }
+      showToast('error', 'Please resolve highlighted inflow errors.');
       return;
     }
 
-    if (!incTargetId) {
-      showToast('error', 'Please select a target cash asset or bank card account');
-      return;
-    }
-
-    onAddIncome(amountNum, incDate, incSource || 'Anonymous Inflow', incCategory, incTargetId, incTargetType);
+    onAddIncome(parseFloat(incAmount), incDate, incSource || 'Anonymous Inflow', incCategory, incTargetId, incTargetType);
     setIncAmount('');
     setIncSource('');
     setIncCategory('Salary');
+    setIncSubmitted(false);
+    setIncErrors({});
     showToast('success', 'Income received and ledger balanced successfully!');
   };
 
   const handleExpenseSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setExpSubmitted(true);
     setInsufficiencyError(null);
-    const amountNum = parseFloat(expAmount) || 0;
-    if (amountNum <= 0) {
-      showToast('error', 'Amount must be positive');
-      return;
-    }
-
-    if (!expMethodId) {
-      showToast('error', 'Please select a valid payment source account');
-      return;
-    }
-
-    // Guard: Prevent payments with insufficient balances!
-    let availableBalance = 0;
-    if (expMethodType === 'cash') {
-      const match = cashAccounts.find(c => c.id === expMethodId);
-      availableBalance = match ? match.balance : 0;
-    } else {
-      const match = cards.find(c => c.id === expMethodId);
-      availableBalance = match ? match.currentBalance : 0;
-    }
-
-    if (availableBalance < amountNum) {
-      setInsufficiencyError(`Incomplete Transaction: Insufficient balance in chosen account! Available: ${currency} ${availableBalance.toLocaleString()}, required: ${currency} ${amountNum.toLocaleString()}`);
+    const methodComp = expMethodId ? `${expMethodId}:${expMethodType}` : '';
+    const isValid = validateExpense(expTitle, expDesc, expAmount, expMethodId, expMethodType, true);
+    if (!isValid) {
+      if (!expTitle.trim()) {
+        expTitleRef.current?.focus();
+      } else if (!expAmount || parseFloat(expAmount) <= 0) {
+        expAmountRef.current?.focus();
+      } else {
+        expTargetRef.current?.focus();
+      }
+      showToast('error', 'Please resolve highlighted outflow errors.');
       return;
     }
 
     onAddExpense(
       expTitle || 'Instant Invoice',
       expDesc || 'Uncategorized charge log',
-      amountNum,
+      parseFloat(expAmount),
       expDate,
       expCategory,
       expMethodId,
@@ -123,6 +209,8 @@ export default function InflowsOutflows({
     setExpAmount('');
     setExpTitle('');
     setExpDesc('');
+    setExpSubmitted(false);
+    setExpErrors({});
     showToast('success', 'Invoice payment settled automatically! Account balance reduced.');
   };
 
@@ -130,6 +218,9 @@ export default function InflowsOutflows({
     const [id, type] = value.split(':');
     setIncTargetId(id);
     setIncTargetType(type as 'cash' | 'card');
+    if (incSubmitted) {
+      validateIncome(incSource, incAmount, value, true);
+    }
   };
 
   const handleSelectPaymentMethod = (value: string) => {
@@ -137,6 +228,9 @@ export default function InflowsOutflows({
     setExpMethodId(id);
     setExpMethodType(type as 'cash' | 'card');
     setInsufficiencyError(null);
+    if (expSubmitted) {
+      validateExpense(expTitle, expDesc, expAmount, id, type as 'cash' | 'card', true);
+    }
   };
 
   return (
@@ -181,26 +275,50 @@ export default function InflowsOutflows({
             <div>
               <label className="text-[10px] text-[#888888] font-mono font-bold uppercase block mb-1">Receipt Source Title</label>
               <input
+                ref={incSourceRef}
                 type="text"
                 placeholder="e.g. Website Overhaul project bonus"
                 value={incSource}
-                onChange={(e) => setIncSource(e.target.value)}
-                required
-                className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500"
+                onChange={(e) => {
+                  setIncSource(e.target.value);
+                  validateIncome(e.target.value, incAmount, incTargetId ? `${incTargetId}:${incTargetType}` : '', incSubmitted);
+                }}
+                className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none transition-colors ${
+                  incErrors.source
+                    ? 'border-rose-500 focus:border-rose-600'
+                    : incSource && !incErrors.source
+                    ? 'border-emerald-500 focus:border-emerald-600'
+                    : 'border-zinc-805 border-zinc-800 focus:border-zinc-500'
+                }`}
               />
+              {incErrors.source && (
+                <span className="text-rose-400 font-mono text-[10px] mt-1 block">{incErrors.source}</span>
+              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] text-[#888888] font-mono font-bold uppercase block mb-1">Received Sum ({currency})</label>
                 <input
+                  ref={incAmountRef}
                   type="number"
                   placeholder="0.00"
                   value={incAmount}
-                  onChange={(e) => setIncAmount(e.target.value)}
-                  className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono font-semibold"
-                  required
+                  onChange={(e) => {
+                    setIncAmount(e.target.value);
+                    validateIncome(incSource, e.target.value, incTargetId ? `${incTargetId}:${incTargetType}` : '', incSubmitted);
+                  }}
+                  className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none font-mono font-semibold transition-colors ${
+                    incErrors.amount
+                      ? 'border-rose-500 focus:border-rose-600'
+                      : incAmount && !incErrors.amount
+                      ? 'border-emerald-500 focus:border-emerald-600'
+                      : 'border-zinc-800 focus:border-zinc-500'
+                  }`}
                 />
+                {incErrors.amount && (
+                  <span className="text-rose-400 font-mono text-[10px] mt-1 block">{incErrors.amount}</span>
+                )}
               </div>
 
               <div>
@@ -208,7 +326,7 @@ export default function InflowsOutflows({
                 <select
                   value={incCategory}
                   onChange={(e) => setIncCategory(e.target.value as CategoryIncome)}
-                  className="w-full bg-[#050505] border border-zinc-800 text-zinc-300 text-xs rounded-xl px-2.5 py-2.5 focus:outline-none focus:border-zinc-500"
+                  className="w-full bg-[#050505] border border-zinc-800 text-zinc-300 text-xs rounded-xl px-2.5 py-3 focus:outline-none focus:border-zinc-500 transition-colors"
                 >
                   <option value="Salary">Salary</option>
                   <option value="Freelance">Freelance</option>
@@ -220,28 +338,27 @@ export default function InflowsOutflows({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] text-[#888888] font-mono font-bold block mb-1 uppercase">Record Date</label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={incDate}
-                    onChange={(e) => setIncDate(e.target.value)}
-                    className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono"
-                    required
-                  />
-                </div>
+                <input
+                  type="date"
+                  value={incDate}
+                  onChange={(e) => setIncDate(e.target.value)}
+                  className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-3 focus:outline-none focus:border-zinc-500 font-mono"
+                  required
+                />
               </div>
 
               <div>
                 <label className="text-[10px] text-[#888888] font-mono font-bold block mb-1 uppercase">Receipt Target Account</label>
                 <select
-                  value={`${incTargetId}:${incTargetType}`}
+                  ref={incTargetRef}
+                  value={incTargetId ? `${incTargetId}:${incTargetType}` : ''}
                   onChange={(e) => handleSelectTargetAccount(e.target.value)}
-                  className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-2.5 py-2.5 focus:outline-none focus:border-zinc-500 font-medium font-mono"
-                  required
+                  className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-2.5 py-3 focus:outline-none focus:border-zinc-500 font-medium font-mono"
                 >
+                  <option value="">Select target</option>
                   <optgroup label="Cash Wallets">
                     {cashAccounts.map(c => (
                       <option key={c.id} value={`${c.id}:cash`}>Wallet: {c.name} (Bal: {currency}{c.balance})</option>
@@ -253,12 +370,15 @@ export default function InflowsOutflows({
                     ))}
                   </optgroup>
                 </select>
+                {incErrors.target && (
+                  <span className="text-rose-400 font-mono text-[10px] mt-1 block">{incErrors.target}</span>
+                )}
               </div>
             </div>
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
+              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
             >
               <PlusCircle size={14} className="text-emerald-600" />
               Collect and Increment Balance
@@ -270,40 +390,65 @@ export default function InflowsOutflows({
             <div>
               <label className="text-[10px] text-[#888888] font-mono font-bold uppercase block mb-1">Expense / Invoice Title</label>
               <input
+                ref={expTitleRef}
                 type="text"
                 placeholder="e.g. Electric bill payment, restaurant burger"
                 value={expTitle}
-                onChange={(e) => setExpTitle(e.target.value)}
-                required
-                className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-medium"
+                onChange={(e) => {
+                  setExpTitle(e.target.value);
+                  validateExpense(e.target.value, expDesc, expAmount, expMethodId, expMethodType, expSubmitted);
+                }}
+                className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none font-medium transition-colors ${
+                  expErrors.title
+                    ? 'border-rose-500 focus:border-rose-600'
+                    : expTitle && !expErrors.title
+                    ? 'border-emerald-500 focus:border-emerald-600'
+                    : 'border-zinc-800'
+                }`}
               />
+              {expErrors.title && (
+                <span className="text-rose-400 font-mono text-[10px] mt-1 block">{expErrors.title}</span>
+              )}
             </div>
 
             <div>
-              <label className="text-[10px] text-[#888888] font-mono font-bold uppercase block mb-1">Invoice Notes / Description</label>
+              <label className="text-[10px] text-[#888888] font-mono font-bold uppercase block mb-1">Invoice Notes / Description (Optional)</label>
               <input
                 type="text"
                 placeholder="e.g. Account code: ELE-291, reference 1"
                 value={expDesc}
-                onChange={(e) => setExpDesc(e.target.value)}
-                className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500"
+                onChange={(e) => {
+                  setExpDesc(e.target.value);
+                  validateExpense(expTitle, e.target.value, expAmount, expMethodId, expMethodType, expSubmitted);
+                }}
+                className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-3 focus:outline-none focus:border-zinc-500 transition-colors font-medium"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] text-[#888888] font-mono font-bold uppercase block mb-1">Settled Sum ({currency})</label>
                 <input
+                  ref={expAmountRef}
                   type="number"
                   placeholder="0.00"
                   value={expAmount}
                   onChange={(e) => {
                     setExpAmount(e.target.value);
                     setInsufficiencyError(null);
+                    validateExpense(expTitle, expDesc, e.target.value, expMethodId, expMethodType, expSubmitted);
                   }}
-                  className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono font-semibold"
-                  required
+                  className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none font-mono font-semibold transition-colors ${
+                    expErrors.amount
+                      ? 'border-rose-500 focus:border-rose-600'
+                      : expAmount && !expErrors.amount
+                      ? 'border-emerald-500 focus:border-emerald-600'
+                      : 'border-zinc-800 focus:border-zinc-500'
+                  }`}
                 />
+                {expErrors.amount && (
+                  <span className="text-rose-400 font-mono text-[10px] mt-1 block">{expErrors.amount}</span>
+                )}
               </div>
 
               <div>
@@ -311,7 +456,7 @@ export default function InflowsOutflows({
                 <select
                   value={expCategory}
                   onChange={(e) => setExpCategory(e.target.value as CategoryExpense)}
-                  className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-2.5 py-2.5 focus:outline-none focus:border-zinc-500"
+                  className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-2.5 py-3 focus:outline-none focus:border-zinc-500 transition-colors"
                 >
                   <option value="Food">Food</option>
                   <option value="Transport">Transport</option>
@@ -327,14 +472,14 @@ export default function InflowsOutflows({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] text-[#888888] font-mono font-bold block mb-1 uppercase">Transaction Date</label>
                 <input
                   type="date"
                   value={expDate}
                   onChange={(e) => setExpDate(e.target.value)}
-                  className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono"
+                  className="w-full bg-[#050505] border border-zinc-800 text-white text-xs rounded-xl px-3 py-3 focus:outline-none focus:border-zinc-500 font-mono"
                   required
                 />
               </div>
@@ -342,11 +487,18 @@ export default function InflowsOutflows({
               <div>
                 <label className="text-[10px] text-[#888888] font-mono font-bold block mb-1 uppercase">Deduct Balance From</label>
                 <select
-                  value={`${expMethodId}:${expMethodType}`}
+                  ref={expTargetRef}
+                  value={expMethodId ? `${expMethodId}:${expMethodType}` : ''}
                   onChange={(e) => handleSelectPaymentMethod(e.target.value)}
-                  className="w-full bg-[#050505] border border-zinc-808 border-zinc-800 text-white text-xs rounded-xl px-2.5 py-2.5 focus:outline-none focus:border-zinc-500"
-                  required
+                  className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-2.5 py-3 focus:outline-none transition-colors ${
+                    expErrors.methodId
+                      ? 'border-rose-500 focus:border-rose-600'
+                      : expMethodId && !expErrors.methodId
+                      ? 'border-emerald-500'
+                      : 'border-zinc-800'
+                  }`}
                 >
+                  <option value="">Select source</option>
                   <optgroup label="Cash Wallets">
                     {cashAccounts.map(c => (
                       <option key={c.id} value={`${c.id}:cash`}>{c.name} ({currency}{c.balance})</option>
@@ -358,12 +510,15 @@ export default function InflowsOutflows({
                     ))}
                   </optgroup>
                 </select>
+                {expErrors.methodId && (
+                  <span className="text-rose-400 font-mono text-[10px] mt-1 block">{expErrors.methodId}</span>
+                )}
               </div>
             </div>
 
             {/* ERROR TRIGGER INDICATOR */}
             {insufficiencyError && (
-              <div className="p-4 bg-rose-950/40 border border-rose-900/65 rounded-xl flex items-start gap-2 text-rose-300 font-semibold text-xs leading-relaxed animation-bounce mt-2">
+              <div className="p-4 bg-rose-950/40 border border-rose-900/65 rounded-xl flex items-start gap-2 text-rose-300 font-semibold text-xs leading-relaxed mt-2 animate-pulse">
                 <ShieldAlert size={16} className="shrink-0 mt-0.5 text-rose-400 font-extrabold" />
                 <span>{insufficiencyError}</span>
               </div>
@@ -371,7 +526,7 @@ export default function InflowsOutflows({
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
+              className="w-full py-3.5 bg-white text-black font-mono font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-lg"
             >
               <MinusCircle size={14} className="text-rose-600" />
               Settle Invoice & Deduct

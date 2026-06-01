@@ -39,6 +39,15 @@ export default function DebtTracker({
   const [paySourceType, setPaySourceType] = useState<'cash' | 'card'>('cash');
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
+  // Validation States
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitted, setSubmitted] = useState(false);
+
+  // Focus Refs
+  const sourceInputRef = React.useRef<HTMLInputElement>(null);
+  const amountInputRef = React.useRef<HTMLInputElement>(null);
+  const dateInputRef = React.useRef<HTMLInputElement>(null);
+
   React.useEffect(() => {
     if (cashAccounts.length > 0 && !paySourceId) {
       setPaySourceId(cashAccounts[0].id);
@@ -46,17 +55,57 @@ export default function DebtTracker({
     }
   }, [cashAccounts, paySourceId]);
 
+  const validateDebtForm = (src: string, amtStr: string, date: string, sub: boolean) => {
+    const errs: Record<string, string> = {};
+    if (sub || src) {
+      if (!src.trim()) {
+        errs.source = 'Creditor / Debt source is required';
+      } else if (src.trim().length < 3) {
+        errs.source = 'Source must be at least 3 characters';
+      } else if (/[<>{}]/.test(src)) {
+        errs.source = 'Special characters are not allowed';
+      }
+    }
+    if (sub || amtStr) {
+      if (!amtStr) {
+        errs.amount = 'Principal amount is required';
+      } else {
+        const num = parseFloat(amtStr);
+        if (isNaN(num)) {
+          errs.amount = 'Must be a valid number';
+        } else if (num <= 0) {
+          errs.amount = 'Principal amount must be positive';
+        }
+      }
+    }
+    if (sub || date) {
+      if (!date) {
+        errs.dueDate = 'Due date is required';
+      }
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleCreateDebt = (e: React.FormEvent) => {
     e.preventDefault();
-    const amountVal = parseFloat(totalDebt) || 0;
-    if (!source.trim() || amountVal <= 0 || !dueDate) {
-      showToast('error', 'Debt source, total positive amount, and due date are strictly required.');
+    setSubmitted(true);
+    const isValid = validateDebtForm(source, totalDebt, dueDate, true);
+    if (!isValid) {
+      if (!source.trim()) {
+        sourceInputRef.current?.focus();
+      } else if (!totalDebt || parseFloat(totalDebt) <= 0) {
+        amountInputRef.current?.focus();
+      } else {
+        dateInputRef.current?.focus();
+      }
+      showToast('error', 'Please resolve highlighted liability errors.');
       return;
     }
 
     onAddDebt({
-      debtSource: source,
-      totalAmount: amountVal,
+      debtSource: source.trim(),
+      totalAmount: parseFloat(totalDebt),
       dueDate,
       notes: notes || 'No extra notes provided.',
     });
@@ -67,6 +116,8 @@ export default function DebtTracker({
     setDueDate('');
     setNotes('');
     setIsAddingDebt(false);
+    setSubmitted(false);
+    setErrors({});
     showToast('success', 'Outstanding Debt registered successfully! Tracks updated.');
   };
 
@@ -164,7 +215,11 @@ export default function DebtTracker({
             <button
               type="button"
               className="text-xs font-mono font-bold text-zinc-500 hover:text-white uppercase transition-colors"
-              onClick={() => setIsAddingDebt(false)}
+              onClick={() => {
+                setIsAddingDebt(false);
+                setErrors({});
+                setSubmitted(false);
+              }}
             >
               Cancel
             </button>
@@ -172,56 +227,92 @@ export default function DebtTracker({
 
           <div className="space-y-3.5">
             <div>
-              <label className="text-[10px] text-[#888888] font-bold block mb-1">Creditor / Debt Source</label>
+              <label className="text-[10px] text-[#888888] font-bold block mb-1 uppercase font-mono">Creditor / Debt Source</label>
               <input
+                ref={sourceInputRef}
                 type="text"
                 placeholder="e.g. Samantha Friendly Loan"
                 value={source}
-                onChange={(e) => setSource(e.target.value)}
-                required
-                className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-medium"
+                onChange={(e) => {
+                  setSource(e.target.value);
+                  validateDebtForm(e.target.value, totalDebt, dueDate, submitted);
+                }}
+                className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none transition-colors ${
+                  errors.source
+                    ? 'border-rose-500 focus:border-rose-600'
+                    : source && !errors.source
+                    ? 'border-emerald-500 focus:border-emerald-600'
+                    : 'border-zinc-800 focus:border-zinc-500'
+                }`}
               />
+              {errors.source && (
+                <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.source}</span>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-[10px] text-[#888888] font-bold block mb-1">Principal Amount ({currency})</label>
+                <label className="text-[10px] text-[#888888] font-bold block mb-1 uppercase font-mono">Principal Amount ({currency})</label>
                 <input
+                  ref={amountInputRef}
                   type="number"
                   placeholder="0.00"
                   value={totalDebt}
-                  onChange={(e) => setTotalDebt(e.target.value)}
-                  className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono"
-                  required
+                  onChange={(e) => {
+                    setTotalDebt(e.target.value);
+                    validateDebtForm(source, e.target.value, dueDate, submitted);
+                  }}
+                  className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none font-mono transition-colors ${
+                    errors.amount
+                      ? 'border-rose-500 focus:border-rose-600'
+                      : totalDebt && !errors.amount
+                      ? 'border-emerald-500'
+                      : 'border-zinc-800'
+                  }`}
                 />
+                {errors.amount && (
+                  <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.amount}</span>
+                )}
               </div>
 
               <div>
-                <label className="text-[10px] text-[#888888] font-bold block mb-1">Pay-off Due Date</label>
+                <label className="text-[10px] text-[#888888] font-bold block mb-1 uppercase font-mono">Pay-off Due Date</label>
                 <input
+                  ref={dateInputRef}
                   type="date"
                   value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full bg-[#050505] border border-zinc-850 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500 font-mono"
-                  required
+                  onChange={(e) => {
+                    setDueDate(e.target.value);
+                    validateDebtForm(source, totalDebt, e.target.value, submitted);
+                  }}
+                  className={`w-full bg-[#050505] border text-white text-xs rounded-xl px-3 py-3 focus:outline-none font-mono transition-colors ${
+                    errors.dueDate
+                      ? 'border-rose-500'
+                      : dueDate && !errors.dueDate
+                      ? 'border-emerald-500'
+                      : 'border-zinc-800'
+                  }`}
                 />
+                {errors.dueDate && (
+                  <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.dueDate}</span>
+                )}
               </div>
             </div>
 
             <div>
-              <label className="text-[10px] text-[#888888] font-bold block mb-1">Special Notes / Terms</label>
+              <label className="text-[10px] text-[#888888] font-bold block mb-1 uppercase font-mono">Special Notes / Terms (Optional)</label>
               <input
                 type="text"
                 placeholder="e.g. Zero-interest payback setup..."
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-zinc-500"
+                className="w-full bg-[#050505] border border-zinc-805 border-zinc-800 text-white text-xs rounded-xl px-3 py-3 focus:outline-none focus:border-zinc-500 transition-colors"
               />
             </div>
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-white text-black font-semibold text-xs rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer font-mono font-bold uppercase tracking-wider"
+              className="w-full py-3 bg-white text-black font-semibold text-xs rounded-xl hover:bg-zinc-200 transition-all cursor-pointer font-mono font-bold uppercase tracking-wider"
             >
               Verify and Record Liability
             </button>

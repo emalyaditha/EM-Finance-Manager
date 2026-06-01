@@ -29,6 +29,15 @@ export default function TransactionEditModal({
   const [accountType, setAccountType] = useState<'cash' | 'card'>('cash');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Validation States
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitted, setSubmitted] = useState(false);
+
+  // Focus input refs
+  const titleInputRef = React.useRef<HTMLInputElement>(null);
+  const amountInputRef = React.useRef<HTMLInputElement>(null);
+  const dateInputRef = React.useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (transaction) {
       setTitle(transaction.title);
@@ -37,16 +46,61 @@ export default function TransactionEditModal({
       setCategory(transaction.category);
       setAccountId(transaction.accountId || '');
       setAccountType(transaction.accountType || 'cash');
+      setErrors({});
+      setSubmitted(false);
     }
   }, [transaction]);
 
   if (!transaction) return null;
 
+  const validateTxForm = (t: string, amt: number | '', dt: string, sub: boolean) => {
+    const errs: Record<string, string> = {};
+    if (sub || t) {
+      if (!t.trim()) {
+        errs.title = 'Title or details are required';
+      } else if (t.trim().length < 3) {
+        errs.title = 'Title must be at least 3 characters long';
+      } else if (/[<>{}]/.test(t)) {
+        errs.title = 'Special character inputs are forbidden';
+      }
+    }
+    if (sub || amt !== '') {
+      if (amt === '') {
+        errs.amount = 'Amount is required';
+      } else {
+        const num = Number(amt);
+        if (isNaN(num)) {
+          errs.amount = 'Must enter a valid value';
+        } else if (num <= 0) {
+          errs.amount = 'Amount must be a positive scale';
+        }
+      }
+    }
+    if (sub || dt) {
+      if (!dt) {
+        errs.date = 'Selected date is required';
+      }
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !amount || !date || !accountId) return;
+    setSubmitted(true);
+    const isValid = validateTxForm(title, amount, date, true);
+    if (!isValid) {
+      if (!title.trim()) {
+        titleInputRef.current?.focus();
+      } else if (amount === '' || Number(amount) <= 0) {
+        amountInputRef.current?.focus();
+      } else {
+        dateInputRef.current?.focus();
+      }
+      return;
+    }
     onSave(transaction.id, {
-      title,
+      title: title.trim(),
       amount: Number(amount),
       date,
       category,
@@ -69,32 +123,70 @@ export default function TransactionEditModal({
           <div>
             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Title / Description</label>
             <input 
+              ref={titleInputRef}
               type="text" 
-              required
               value={title} 
-              onChange={e => setTitle(e.target.value)}
-              className="w-full bg-[#050505] border border-zinc-800 text-white rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-zinc-500 transition-colors" 
+              onChange={e => {
+                setTitle(e.target.value);
+                validateTxForm(e.target.value, amount, date, submitted);
+              }}
+              className={`w-full bg-[#050505] border text-white rounded-xl px-3 py-2 text-sm focus:outline-none transition-colors ${
+                errors.title
+                  ? 'border-rose-500 focus:border-rose-600'
+                  : title && !errors.title
+                  ? 'border-emerald-500'
+                  : 'border-zinc-800 focus:border-zinc-500'
+              }`} 
             />
+            {errors.title && (
+              <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.title}</span>
+            )}
           </div>
           <div>
             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Amount ({currency})</label>
             <input 
+              ref={amountInputRef}
               type="number" 
-              required min="0.01" step="0.01"
+              step="0.01"
               value={amount} 
-              onChange={e => setAmount(Number(e.target.value))}
-              className="w-full bg-[#050505] border border-zinc-800 text-white rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-zinc-500 font-mono transition-colors" 
+              onChange={e => {
+                const val = e.target.value === '' ? '' : Number(e.target.value);
+                setAmount(val);
+                validateTxForm(title, val, date, submitted);
+              }}
+              className={`w-full bg-[#050505] border text-white rounded-xl px-3 py-2 text-sm focus:outline-none font-mono transition-colors ${
+                errors.amount
+                  ? 'border-rose-500 focus:border-rose-600'
+                  : amount !== '' && !errors.amount
+                  ? 'border-emerald-500'
+                  : 'border-zinc-800'
+              }`} 
             />
+            {errors.amount && (
+              <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.amount}</span>
+            )}
           </div>
           <div>
             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Date</label>
             <input 
+              ref={dateInputRef}
               type="date" 
-              required
               value={date} 
-              onChange={e => setDate(e.target.value)}
-              className="w-full bg-[#050505] border border-zinc-800 text-white rounded-xl px-3 py-2 text-[13px] uppercase focus:outline-none focus:border-zinc-500 font-mono transition-colors" 
+              onChange={e => {
+                setDate(e.target.value);
+                validateTxForm(title, amount, e.target.value, submitted);
+              }}
+              className={`w-full bg-[#050505] border text-white rounded-xl px-3 py-2 text-[13px] uppercase focus:outline-none font-mono transition-colors ${
+                errors.date
+                  ? 'border-rose-500'
+                  : date && !errors.date
+                  ? 'border-emerald-500'
+                  : 'border-zinc-800'
+              }`} 
             />
+            {errors.date && (
+              <span className="text-rose-400 font-mono text-[10px] mt-1 block">{errors.date}</span>
+            )}
           </div>
           <div>
             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Sub-tag / Category</label>
