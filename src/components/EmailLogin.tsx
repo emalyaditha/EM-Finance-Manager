@@ -21,6 +21,8 @@ export default function EmailLogin({ onUnlocked }: EmailLoginProps) {
   const [otpValue, setOtpValue] = useState('');
   
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
   
   const [sandboxOtp, setSandboxOtp] = useState<string | null>(null);
 

@@ -692,9 +692,15 @@ export default function CashCardManagement({
 
                   <div className="z-10 flex justify-between items-end">
                     <div>
-                      <span className="text-[10px] text-white/40 block">Available Balance</span>
+                      <span className="text-[10px] text-white/40 block">
+                        {card.cardType === 'Credit' ? 'Available Credit' : 'Available Balance'}
+                      </span>
                       <span className={`text-sm font-bold font-mono tracking-tight ${isCanceled ? 'text-white/50 line-through' : 'text-white'}`}>
-                        {currency} {card.currentBalance.toLocaleString()}
+                        {currency} {
+                          card.cardType === 'Credit' 
+                            ? ((card.limit ?? 0) - card.currentBalance).toLocaleString() 
+                            : card.currentBalance.toLocaleString()
+                        }
                       </span>
                     </div>
 

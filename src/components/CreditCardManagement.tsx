@@ -178,7 +178,7 @@ export default function CreditCardManagement({ creditCards, cashAccounts, cards,
                       <span className="text-[10px] text-zinc-500 bg-zinc-900 border border-zinc-800/80 px-1.5 py-0.5 rounded font-mono font-medium">{c.bankName}</span>
                     </h4>
                     <p className="text-xs text-zinc-400">
-                        Balance: <span className="font-mono text-zinc-200 font-bold">{currency} {c.currentBalance.toFixed(2)}</span> |
+                        Debt: <span className="font-mono text-zinc-200 font-bold">{currency} {c.currentBalance.toFixed(2)}</span> |
                         Avail: <span className="font-mono text-emerald-400 font-bold">{currency} {((c.limit ?? 0) - c.currentBalance).toFixed(2)}</span>
                     </p>
                     <div className='flex items-center gap-2 mt-2'>
